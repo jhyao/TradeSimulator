@@ -1,0 +1,144 @@
+basePath: /api/v1
+definitions:
+  models.HistoricalDataResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.OHLCV'
+        type: array
+      symbol:
+        type: string
+    type: object
+  models.OHLCV:
+    properties:
+      close:
+        type: number
+      high:
+        type: number
+      low:
+        type: number
+      open:
+        type: number
+      time:
+        type: integer
+      volume:
+        type: number
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@tradesimulator.com
+    name: API Support
+  description: Trading simulation API for historical data replay and order execution
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  termsOfService: http://swagger.io/terms/
+  title: Trade Simulator API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Get health status of the service and database connection
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service is healthy
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service is unhealthy
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health Check
+      tags:
+      - health
+  /market/historical:
+    get:
+      description: Fetch historical OHLCV data for supported trading pairs (BTCUSDT,
+        ETHUSDT)
+      parameters:
+      - description: Trading symbol
+        enum:
+        - BTCUSDT
+        - ETHUSDT
+        in: query
+        name: symbol
+        required: true
+        type: string
+      - default: 1h
+        description: Kline interval
+        enum:
+        - 1m
+        - 3m
+        - 5m
+        - 15m
+        - 30m
+        - 1h
+        - 2h
+        - 4h
+        - 6h
+        - 8h
+        - 12h
+        - 1d
+        - 3d
+        - 1w
+        - 1M
+        in: query
+        name: interval
+        type: string
+      - default: 1000
+        description: Number of klines to return (1-1000)
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Start time in milliseconds
+        in: query
+        name: startTime
+        type: integer
+      - description: End time in milliseconds
+        in: query
+        name: endTime
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Historical market data
+          schema:
+            $ref: '#/definitions/models.HistoricalDataResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Historical Market Data
+      tags:
+      - market
+  /market/symbols:
+    get:
+      description: Get list of supported trading pairs for historical data
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of supported symbols
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Supported Trading Symbols
+      tags:
+      - market
+schemes:
+- http
+swagger: "2.0"
