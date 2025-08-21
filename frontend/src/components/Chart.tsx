@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
 
 interface OHLCV {
@@ -27,6 +27,79 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   const displayedRangeStart = useRef<number>(0);
   const isLoadingMore = useRef(false);
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const candlestickSeriesRef = useRef<any>(null);
+
+  const fetchData = useCallback(async (endTime?: number) => {
+    let url = `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=1000`;
+    if (endTime) {
+      url += `&endTime=${endTime}`;
+    }
+
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch chart data');
+    }
+
+    const response_data: HistoricalDataResponse = await response.json();
+    
+    const candlestickData = response_data.data.map(item => ({
+      time: Math.floor(item.time / 1000) as any,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+    }));
+
+    return { candlestickData, rawData: response_data.data };
+  }, [symbol, timeframe]);
+
+  const initLoad = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const { candlestickData, rawData } = await fetchData();
+
+      if (candlestickSeriesRef.current) {
+        candlestickSeriesRef.current.setData(candlestickData);
+      }
+      if (rawData.length > 0) {
+        displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
+        console.log('Displayed range start:', displayedRangeStart.current);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [fetchData]);
+
+  const loadMoreData = useCallback(async () => {
+    if (isLoadingMore.current || !candlestickSeriesRef.current) return;
+
+    try {
+      isLoadingMore.current = true;
+      const { candlestickData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1);
+
+      const existingData = candlestickSeriesRef.current.data();
+      const newData = [...candlestickData, ...existingData];
+      candlestickSeriesRef.current.setData(newData);
+
+      if (rawData.length > 0) {
+        displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
+        console.log('Displayed range start after fetch:', displayedRangeStart.current);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      isLoadingMore.current = false;
+      if (fetchTimeout.current) {
+        clearTimeout(fetchTimeout.current);
+        fetchTimeout.current = null;
+      }
+    }
+  }, [fetchData]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -67,98 +140,22 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       wickDownColor: '#ef5350',
     });
 
-    const fetchChartData = async () => {
-      setIsLoading(true);
-      setError(null);
+    candlestickSeriesRef.current = candlestickSeries;
 
-      try {
-        const response = await fetch(
-          `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=1000`
-        );
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch chart data');
-        }
-
-        const response_data: HistoricalDataResponse = await response.json();
-        
-        const candlestickData = response_data.data.map(item => ({
-          time: Math.floor(item.time / 1000) as any,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close,
-        }));
-
-        candlestickSeries.setData(candlestickData);
-        if (response_data.data.length > 0) {
-          displayedRangeStart.current = Math.floor(response_data.data[0].time / 1000);
-          console.log('Displayed range start:', displayedRangeStart.current);
-        }
-        
-        chart.timeScale().fitContent();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchChartData();
-
-    const fetchMoreData = async () => {
-      if (isLoadingMore.current) return; // Prevent multiple fetches
-
-      try {
-        isLoadingMore.current = true;
-        const response = await fetch(
-          `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=1000&endTime=${displayedRangeStart.current * 1000 - 1}`
-        );
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch chart data');
-        }
-
-        const response_data: HistoricalDataResponse = await response.json();
-        
-        const candlestickData = response_data.data.map(item => ({
-          time: Math.floor(item.time / 1000) as any,
-          open: item.open,
-          high: item.high,
-          low: item.low,
-          close: item.close,
-        }));
-
-        // get existing data and add new loaded data before existing data
-        const existingData = candlestickSeries.data();
-        const newData = [...candlestickData, ...existingData];
-        candlestickSeries.setData(newData);
-
-        if (response_data.data.length > 0) {
-          displayedRangeStart.current = Math.floor(response_data.data[0].time / 1000);
-          console.log('Displayed range start after fetch:', displayedRangeStart.current);
-        }
-        
-        // chart.timeScale().fitContent();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred');
-      } finally {
-        isLoadingMore.current = false;
-      }
-
-    }
+    initLoad().then(() => {
+      chart.timeScale().fitContent();
+    });
 
     chart.timeScale().subscribeVisibleLogicalRangeChange((timeRange) => {
       console.log('Visible time range changed:', timeRange);
-      if (timeRange && Number(timeRange.from) < -1) {
-        setTimeout(() => {
-          fetchMoreData();
-        }, 100);
+
+      if (fetchTimeout.current) {
+        return;
       }
-      if (fetchTimeout.current) clearTimeout(fetchTimeout.current);
+
       if (timeRange && Number(timeRange.from) < -1) {
         fetchTimeout.current = setTimeout(() => {
-          fetchMoreData();
+          loadMoreData();
         }, 100);
       }
     });
@@ -179,7 +176,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, initLoad, loadMoreData]);
 
   if (error) {
     return (
