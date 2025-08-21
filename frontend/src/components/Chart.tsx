@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
 
 interface OHLCV {
   time: number;
@@ -28,9 +28,10 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   const isLoadingMore = useRef(false);
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const candlestickSeriesRef = useRef<any>(null);
+  const volumeSeriesRef = useRef<any>(null);
 
-  const fetchData = useCallback(async (endTime?: number) => {
-    let url = `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=1000`;
+  const fetchData = useCallback(async (endTime?: number, limit: number = 100) => {
+    let url = `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=${limit}`;
     if (endTime) {
       url += `&endTime=${endTime}`;
     }
@@ -51,7 +52,13 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       close: item.close,
     }));
 
-    return { candlestickData, rawData: response_data.data };
+    const volumeData = response_data.data.map(item => ({
+      time: Math.floor(item.time / 1000) as any,
+      value: item.volume,
+      color: item.close >= item.open ? '#26a69a' : '#ef5350',
+    }));
+
+    return { candlestickData, volumeData, rawData: response_data.data };
   }, [symbol, timeframe]);
 
   const initLoad = useCallback(async () => {
@@ -59,10 +66,13 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
     setError(null);
 
     try {
-      const { candlestickData, rawData } = await fetchData();
+      const { candlestickData, volumeData, rawData } = await fetchData();
 
       if (candlestickSeriesRef.current) {
         candlestickSeriesRef.current.setData(candlestickData);
+      }
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.setData(volumeData);
       }
       if (rawData.length > 0) {
         displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
@@ -76,15 +86,19 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   }, [fetchData]);
 
   const loadMoreData = useCallback(async () => {
-    if (isLoadingMore.current || !candlestickSeriesRef.current) return;
+    if (isLoadingMore.current || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
 
     try {
       isLoadingMore.current = true;
-      const { candlestickData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1);
+      const { candlestickData, volumeData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1, 1000);
 
-      const existingData = candlestickSeriesRef.current.data();
-      const newData = [...candlestickData, ...existingData];
-      candlestickSeriesRef.current.setData(newData);
+      const existingCandlestickData = candlestickSeriesRef.current.data();
+      const newCandlestickData = [...candlestickData, ...existingCandlestickData];
+      candlestickSeriesRef.current.setData(newCandlestickData);
+
+      const existingVolumeData = volumeSeriesRef.current.data();
+      const newVolumeData = [...volumeData, ...existingVolumeData];
+      volumeSeriesRef.current.setData(newVolumeData);
 
       if (rawData.length > 0) {
         displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
@@ -108,9 +122,14 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       layout: {
         background: { type: ColorType.Solid, color: 'white' },
         textColor: 'black',
+        panes: {
+          separatorColor: '#000000ff',
+          separatorHoverColor: 'rgba(58, 58, 58, 0.1)',
+          enableResize: true, // resize hight of panes
+        },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 400,
+      height: chartContainerRef.current.clientWidth * 0.6, // 60% of width for height
       grid: {
         vertLines: {
           color: '#e1e1e1',
@@ -130,6 +149,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
         timeVisible: true,
         secondsVisible: false,
       },
+
     });
 
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
@@ -137,10 +157,34 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       downColor: '#ef5350',
       borderVisible: false,
       wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
+      wickDownColor: '#ef5350'
+    });
+
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      color: '#26a69a',
+      priceFormat: {
+        type: 'volume',
+      }
+    }, 1);
+
+    chart.panes()[1].setHeight(150);
+
+    // volumeSeries.priceScale().applyOptions({
+    //   scaleMargins: {
+    //     top: 0.1,
+    //     bottom: 0,
+    //   },
+    // });
+
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: {
+        top: 0.1,
+        bottom: 0,
+      },
     });
 
     candlestickSeriesRef.current = candlestickSeries;
+    volumeSeriesRef.current = volumeSeries;
 
     initLoad().then(() => {
       chart.timeScale().fitContent();
@@ -165,7 +209,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       if (chartContainerRef.current) {
         chart.applyOptions({ 
           width: chartContainerRef.current.clientWidth,
-          height: 400
+          height: chartContainerRef.current.clientWidth * 0.6, // 60% of width for height
         });
       }
     };
@@ -181,7 +225,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   if (error) {
     return (
       <div style={{ 
-        height: '400px', 
+        height: '600px', 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
@@ -214,7 +258,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
           <div style={{ fontSize: '16px', color: '#666' }}>Loading chart data...</div>
         </div>
       )}
-      <div ref={chartContainerRef} style={{ width: '100%', height: '400px' }} />
+      <div ref={chartContainerRef} style={{ }} />
     </div>
   );
 };

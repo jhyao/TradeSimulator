@@ -10,7 +10,7 @@ function App() {
   return (
     <div className="App">
       <div style={{
-        maxWidth: '1200px',
+        maxWidth: '100%',
         margin: '20px auto',
         padding: '0 20px'
       }}>
