@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import Chart from './components/Chart';
-import ChartControls from './components/ChartControls';
 import StartTimeSelector from './components/StartTimeSelector';
 import SimulationControls from './components/SimulationControls';
+import SymbolSelector from './components/SymbolSelector';
+import TimeframeSelector from './components/TimeframeSelector';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { SimulationApiService } from './services/simulationApi';
 import './App.css';
@@ -80,9 +81,22 @@ function AppContent() {
     setSelectedStartTime(startTime);
   }, []);
 
-  const handleTimeframeChange = useCallback((newTimeframe: string) => {
+  const handleTimeframeChange = useCallback(async (newTimeframe: string) => {
+    // If simulation is running, call API to change timeframe mid-simulation
+    if (simulationState.state === 'playing' || simulationState.state === 'paused') {
+      try {
+        await SimulationApiService.setTimeframe(newTimeframe);
+        console.log(`Timeframe changed to ${newTimeframe} during simulation`);
+      } catch (error) {
+        console.error('Failed to change timeframe during simulation:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        alert(`Failed to change timeframe: ${errorMessage}`);
+        return; // Don't update local state if API call failed
+      }
+    }
+    
     setTimeframe(newTimeframe);
-  }, []);
+  }, [simulationState.state]);
 
   const handleStartSimulation = useCallback(async () => {
     if (!selectedStartTime) return;
@@ -174,26 +188,101 @@ function AppContent() {
           Trade Simulator
         </h1>
         
-        <StartTimeSelector
-          onStartTimeSelected={handleStartTimeSelected}
-          selectedStartTime={selectedStartTime}
-          symbol={symbol}
-        />
-        
-        <SimulationControls
-          selectedStartTime={selectedStartTime}
-          onStartSimulation={handleStartSimulation}
-          onPauseSimulation={handlePauseSimulation}
-          onResumeSimulation={handleResumeSimulation}
-          onStopSimulation={handleStopSimulation}
-          onSpeedChange={handleSpeedChange}
-          simulationState={simulationState.state}
-          currentSpeed={simulationState.speed}
-          currentSimulationTime={simulationState.simulationTime}
-          currentPrice={simulationState.currentPrice}
-          progress={simulationState.progress}
-          symbol={symbol}
-        />
+        {/* 4-Block Control Panel */}
+        <div style={{
+          display: 'flex',
+          height: '120px',
+          backgroundColor: '#f8f9fa',
+          border: '1px solid #dee2e6',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          overflow: 'hidden',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+        }}>
+          {/* Block 1: Symbol + Latest Price */}
+          <div style={{
+            flex: '1',
+            padding: '15px',
+            borderRight: '1px solid #dee2e6',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <SymbolSelector
+              symbol={symbol}
+              onSymbolChange={setSymbol}
+              disabled={simulationState.state !== 'stopped'}
+            />
+          </div>
+          
+          {/* Block 2: Start Time Picker */}
+          <div style={{
+            flex: '1.5',
+            padding: '15px',
+            borderRight: '1px solid #dee2e6',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <StartTimeSelector
+              onStartTimeSelected={handleStartTimeSelected}
+              selectedStartTime={selectedStartTime}
+              symbol={symbol}
+              compact={true}
+            />
+          </div>
+          
+          {/* Block 3: Speed Controls */}
+          <div style={{
+            flex: '1.5',
+            padding: '15px',
+            borderRight: '1px solid #dee2e6',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <SimulationControls
+              selectedStartTime={selectedStartTime}
+              onStartSimulation={handleStartSimulation}
+              onPauseSimulation={handlePauseSimulation}
+              onResumeSimulation={handleResumeSimulation}
+              onStopSimulation={handleStopSimulation}
+              onSpeedChange={handleSpeedChange}
+              simulationState={simulationState.state}
+              currentSpeed={simulationState.speed}
+              currentSimulationTime={simulationState.simulationTime}
+              currentPrice={simulationState.currentPrice}
+              progress={simulationState.progress}
+              symbol={symbol}
+              blockType="speed"
+            />
+          </div>
+          
+          {/* Block 4: Start/Stop Controls */}
+          <div style={{
+            flex: '1',
+            padding: '15px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <SimulationControls
+              selectedStartTime={selectedStartTime}
+              onStartSimulation={handleStartSimulation}
+              onPauseSimulation={handlePauseSimulation}
+              onResumeSimulation={handleResumeSimulation}
+              onStopSimulation={handleStopSimulation}
+              onSpeedChange={handleSpeedChange}
+              simulationState={simulationState.state}
+              currentSpeed={simulationState.speed}
+              currentSimulationTime={simulationState.simulationTime}
+              currentPrice={simulationState.currentPrice}
+              progress={simulationState.progress}
+              symbol={symbol}
+              blockType="controls"
+            />
+          </div>
+        </div>
         
         <div style={{
           backgroundColor: 'white',
@@ -201,12 +290,25 @@ function AppContent() {
           boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
           overflow: 'hidden'
         }}>
-          <ChartControls
-            symbol={symbol}
-            timeframe={timeframe}
-            onSymbolChange={setSymbol}
-            onTimeframeChange={handleTimeframeChange}
-          />
+          {/* Timeframe Selector at top of chart */}
+          <div style={{
+            padding: '10px 15px',
+            backgroundColor: '#f8f9fa',
+            borderBottom: '1px solid #dee2e6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+              Price Chart - {symbol}
+            </h3>
+            <TimeframeSelector
+              timeframe={timeframe}
+              onTimeframeChange={handleTimeframeChange}
+              compact={true}
+            />
+          </div>
+          
           <Chart 
             symbol={symbol} 
             timeframe={timeframe}

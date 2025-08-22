@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/adshao/go-binance/v2"
 	"tradesimulator/internal/models"
+
+	"github.com/adshao/go-binance/v2"
 )
 
 // BinanceService wraps the Binance API client
@@ -22,12 +23,12 @@ type BinanceService struct {
 // Note: Using testnet=false for real data, no API keys needed for public data
 func NewBinanceService() *BinanceService {
 	client := binance.NewClient("", "") // No API key needed for public data
-	
+
 	// Create rate limiter - Binance allows 1200 requests per minute for public endpoints
 	// We'll be conservative and allow 1 request per 100ms (600 requests per minute)
 	rateLimiter := make(chan struct{}, 1)
 	rateLimiter <- struct{}{} // Initialize with one token
-	
+
 	return &BinanceService{
 		client:      client,
 		rateLimiter: rateLimiter,
@@ -194,11 +195,11 @@ func (b *BinanceService) waitForRateLimit() error {
 	// Wait for at least 100ms between requests
 	minInterval := 100 * time.Millisecond
 	elapsed := time.Since(b.lastRequest)
-	
+
 	if elapsed < minInterval {
 		time.Sleep(minInterval - elapsed)
 	}
-	
+
 	b.lastRequest = time.Now()
 	return nil
 }

@@ -104,6 +104,18 @@ export class SimulationApiService {
     return this.handleResponse(response);
   }
 
+  static async setTimeframe(timeframe: string): Promise<{ message: string; timeframe: string }> {
+    const response = await fetch(`${API_BASE_URL}/simulation/timeframe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ timeframe }),
+    });
+
+    return this.handleResponse(response);
+  }
+
   static async getStatus(): Promise<SimulationStatus> {
     const response = await fetch(`${API_BASE_URL}/simulation/status`);
     return this.handleResponse<SimulationStatus>(response);

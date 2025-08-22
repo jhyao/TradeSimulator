@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"tradesimulator/internal/services"
+
+	"github.com/gin-gonic/gin"
 )
 
 type SimulationHandler struct {
@@ -27,6 +28,10 @@ type StartSimulationRequest struct {
 
 type SetSpeedRequest struct {
 	Speed int `json:"speed" binding:"required"`
+}
+
+type SetTimeframeRequest struct {
+	Timeframe string `json:"timeframe" binding:"required"`
 }
 
 // POST /api/v1/simulation/start
@@ -121,6 +126,39 @@ func (sh *SimulationHandler) SetSpeed(c *gin.Context) {
 	})
 }
 
+// POST /api/v1/simulation/timeframe
+func (sh *SimulationHandler) SetTimeframe(c *gin.Context) {
+	var req SetTimeframeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate timeframe
+	validTimeframes := []string{"1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"}
+	valid := false
+	for _, tf := range validTimeframes {
+		if req.Timeframe == tf {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid timeframe. Must be one of: 1s, 1m, 5m, 15m, 1h, 4h, 1d, 1w, 1M"})
+		return
+	}
+
+	if err := sh.engine.SetTimeframe(req.Timeframe); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Timeframe updated",
+		"timeframe": req.Timeframe,
+	})
+}
+
 // GET /api/v1/simulation/status
 func (sh *SimulationHandler) GetStatus(c *gin.Context) {
 	status := sh.engine.GetStatus()
@@ -136,6 +174,7 @@ func RegisterSimulationRoutes(router *gin.RouterGroup, handler *SimulationHandle
 		simulation.POST("/resume", handler.ResumeSimulation)
 		simulation.POST("/stop", handler.StopSimulation)
 		simulation.POST("/speed", handler.SetSpeed)
+		simulation.POST("/timeframe", handler.SetTimeframe)
 		simulation.GET("/status", handler.GetStatus)
 	}
 }

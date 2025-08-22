@@ -5,12 +5,14 @@ interface StartTimeSelectorProps {
   onStartTimeSelected: (startTime: Date) => void;
   selectedStartTime: Date | null;
   symbol?: string;
+  compact?: boolean;
 }
 
 const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({ 
   onStartTimeSelected, 
   selectedStartTime,
-  symbol = 'BTCUSDT'
+  symbol = 'BTCUSDT',
+  compact = false
 }) => {
   const [datetime, setDatetime] = useState('');
   const [earliestTime, setEarliestTime] = useState<Date | null>(null);
@@ -110,6 +112,76 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
     const selectedDateTime = new Date(datetime);
     onStartTimeSelected(selectedDateTime);
   };
+
+  // Compact mode for the 4-block layout
+  if (compact) {
+    return (
+      <div style={{ width: '100%' }}>
+        <label style={{ fontSize: '12px', color: '#555', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>
+          Start Time:
+        </label>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <input
+            type="datetime-local"
+            value={datetime}
+            onChange={(e) => {
+              const newDatetime = e.target.value;
+              setDatetime(newDatetime);
+              setValidationError(null);
+            }}
+            min={earliestTime ? formatDateTimeLocal(earliestTime) : undefined}
+            max={formatDateTimeLocal(new Date())}
+            disabled={loading}
+            style={{
+              flex: 1,
+              padding: '4px 6px',
+              border: `1px solid ${validationError ? '#dc3545' : '#ccc'}`,
+              borderRadius: '4px',
+              fontSize: '12px'
+            }}
+          />
+          <button
+            onClick={() => {
+              if (datetime) {
+                const selectedDateTime = new Date(datetime);
+                if (validateDateTime(selectedDateTime)) {
+                  onStartTimeSelected(selectedDateTime);
+                }
+              }
+            }}
+            disabled={!datetime || loading || !!validationError}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              border: 'none',
+              borderRadius: '3px',
+              backgroundColor: !datetime || loading || !!validationError ? '#ccc' : '#007bff',
+              color: 'white',
+              cursor: !datetime || loading || !!validationError ? 'not-allowed' : 'pointer',
+              fontWeight: '500'
+            }}
+          >
+            OK
+          </button>
+        </div>
+        {validationError && (
+          <div style={{ fontSize: '10px', color: '#dc3545', marginTop: '2px' }}>
+            {validationError}
+          </div>
+        )}
+        {earliestTime && (
+          <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
+            Earliest: {earliestTime.toLocaleString()}
+          </div>
+        )}
+        {selectedStartTime && (
+          <div style={{ fontSize: '10px', color: '#28a745', marginTop: '2px' }}>
+            Selected: {selectedStartTime.toLocaleString()}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{
