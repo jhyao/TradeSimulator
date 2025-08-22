@@ -18,9 +18,10 @@ interface HistoricalDataResponse {
 interface ChartProps {
   symbol: string;
   timeframe: string;
+  selectedStartTime?: Date | null;
 }
 
-const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
+const Chart: React.FC<ChartProps> = ({ symbol, timeframe, selectedStartTime }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,9 +30,30 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
+  const chartRef = useRef<any>(null);
+  const isInitialLoadComplete = useRef(false);
+  const hasReachedEarliestData = useRef(false);
+  const [earliestAvailableTime, setEarliestAvailableTime] = useState<number | null>(null);
+  const isComponentMounted = useRef(true);
+
+  const fetchEarliestTime = useCallback(async () => {
+    try {
+      const response = await fetch(`http://localhost:8080/api/v1/market/earliest-time/${symbol}`);
+      if (response.ok) {
+        const data = await response.json();
+        const earliestTimeInSeconds = Math.floor(data.earliestTime / 1000);
+        setEarliestAvailableTime(earliestTimeInSeconds);
+        return earliestTimeInSeconds;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch earliest time:', err);
+    }
+    return null;
+  }, [symbol]);
 
   const fetchData = useCallback(async (endTime?: number, limit: number = 100) => {
     let url = `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=${limit}`;
+    
     if (endTime) {
       url += `&endTime=${endTime}`;
     }
@@ -64,9 +86,16 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
   const initLoad = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    isInitialLoadComplete.current = false;
+    hasReachedEarliestData.current = false;
 
     try {
-      const { candlestickData, volumeData, rawData } = await fetchData();
+      // Fetch earliest available time first
+      const earliestTime = await fetchEarliestTime();
+      
+      const limit = 100;
+      const endTime = selectedStartTime ? selectedStartTime.getTime() : undefined;
+      const { candlestickData, volumeData, rawData } = await fetchData(endTime, limit);
 
       if (candlestickSeriesRef.current) {
         candlestickSeriesRef.current.setData(candlestickData);
@@ -77,20 +106,65 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       if (rawData.length > 0) {
         displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
         console.log('Displayed range start:', displayedRangeStart.current);
+        
+        // Check if we're already at or near the earliest data
+        if (earliestTime && displayedRangeStart.current <= earliestTime + 86400) { // within 1 day
+          hasReachedEarliestData.current = true;
+          console.log('Already at earliest data');
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setIsLoading(false);
+      isInitialLoadComplete.current = true;
     }
-  }, [fetchData]);
+  }, [fetchData, selectedStartTime, fetchEarliestTime]);
 
   const loadMoreData = useCallback(async () => {
-    if (isLoadingMore.current || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    // Prevent loading if:
+    // 1. Component is unmounted
+    // 2. Already loading more data
+    // 3. Chart series not ready
+    // 4. Initial load not complete
+    // 5. Already reached earliest available data
+    if (!isComponentMounted.current ||
+        isLoadingMore.current || 
+        !candlestickSeriesRef.current || 
+        !volumeSeriesRef.current ||
+        !chartRef.current ||
+        !isInitialLoadComplete.current ||
+        hasReachedEarliestData.current) {
+      console.log('loadMoreData blocked:', {
+        componentMounted: isComponentMounted.current,
+        isLoadingMore: isLoadingMore.current,
+        seriesReady: !!(candlestickSeriesRef.current && volumeSeriesRef.current),
+        chartReady: !!chartRef.current,
+        initialLoadComplete: isInitialLoadComplete.current,
+        reachedEarliest: hasReachedEarliestData.current
+      });
+      return;
+    }
 
     try {
       isLoadingMore.current = true;
+      console.log('Loading more data from:', displayedRangeStart.current);
+      
+      // Don't use selectedStartTime for loading more data, use the actual range start
       const { candlestickData, volumeData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1, 1000);
+
+      // If no new data received, we've reached the earliest available data
+      if (rawData.length === 0) {
+        hasReachedEarliestData.current = true;
+        console.log('No more data available, reached earliest data');
+        return;
+      }
+
+      // Double-check that chart is still available before updating
+      if (!isComponentMounted.current || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
+        console.log('Chart disposed during loadMoreData, aborting update');
+        return;
+      }
 
       const existingCandlestickData = candlestickSeriesRef.current.data();
       const newCandlestickData = [...candlestickData, ...existingCandlestickData];
@@ -101,7 +175,15 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
       volumeSeriesRef.current.setData(newVolumeData);
 
       if (rawData.length > 0) {
-        displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
+        const newRangeStart = Math.floor(rawData[0].time / 1000);
+        
+        // Check if we've reached the earliest available data
+        if (earliestAvailableTime && newRangeStart <= earliestAvailableTime + 86400) { // within 1 day
+          hasReachedEarliestData.current = true;
+          console.log('Reached earliest available data');
+        }
+        
+        displayedRangeStart.current = newRangeStart;
         console.log('Displayed range start after fetch:', displayedRangeStart.current);
       }
     } catch (err) {
@@ -113,10 +195,15 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
         fetchTimeout.current = null;
       }
     }
-  }, [fetchData]);
+  }, [fetchData, earliestAvailableTime]);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    
+    // Reset flags when symbol or timeframe changes
+    isInitialLoadComplete.current = false;
+    hasReachedEarliestData.current = false;
+    isComponentMounted.current = true;
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -169,13 +256,6 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
 
     chart.panes()[1].setHeight(150);
 
-    // volumeSeries.priceScale().applyOptions({
-    //   scaleMargins: {
-    //     top: 0.1,
-    //     bottom: 0,
-    //   },
-    // });
-
     volumeSeries.priceScale().applyOptions({
       scaleMargins: {
         top: 0.1,
@@ -185,10 +265,20 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
 
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    chartRef.current = chart;
 
-    initLoad().then(() => {
-      chart.timeScale().fitContent();
-    });
+    // Use async IIFE for proper error handling
+    (async () => {
+      try {
+        await initLoad();
+        // Only fit content if chart still exists and component is mounted
+        if (isComponentMounted.current && chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
+      } catch (error) {
+        console.error('Error during chart initialization:', error);
+      }
+    })();
 
     chart.timeScale().subscribeVisibleLogicalRangeChange((timeRange) => {
       console.log('Visible time range changed:', timeRange);
@@ -217,6 +307,20 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe }) => {
     window.addEventListener('resize', handleResize);
 
     return () => {
+      // Mark component as unmounted to prevent further operations
+      isComponentMounted.current = false;
+      
+      // Clear any pending timeouts
+      if (fetchTimeout.current) {
+        clearTimeout(fetchTimeout.current);
+        fetchTimeout.current = null;
+      }
+      
+      // Clear refs to prevent access to disposed objects
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      chartRef.current = null;
+      
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };

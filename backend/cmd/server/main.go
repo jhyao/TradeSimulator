@@ -86,6 +86,7 @@ func main() {
 		{
 			market.GET("/historical", marketHandler.GetHistoricalData)
 			market.GET("/symbols", marketHandler.GetSupportedSymbols)
+			market.GET("/earliest-time/:symbol", marketHandler.GetEarliestTime)
 		}
 	}
 

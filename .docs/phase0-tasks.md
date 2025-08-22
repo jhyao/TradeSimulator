@@ -163,15 +163,50 @@ Establish WebSocket infrastructure for real-time communication between frontend 
 
 ---
 
+## Task 5 - Pre-step 1: Simulation Start Time Control
+**Duration**: 1 day  
+**Priority**: Critical
+
+### Description
+Add simulation start time selection control where users choose a specific date/time to begin simulation, then load historical data before that point for chart context.
+
+### Requirements
+- Date/time picker for simulation start point selection
+- Load historical data before selected start time for chart context
+- Display historical data on chart before simulation begins
+- Validate selected start time has sufficient data available
+
+### What to Do
+1. Create start time selection UI component with date/time picker
+2. Add API endpoint to fetch historical data before selected start time
+3. Load and display historical context data on chart
+4. Validate selected start time and show data availability
+5. Prepare simulation dataset starting from selected time
+
+### What NOT to Do
+- Don't implement complex time zone handling
+- Don't add preset time selection (quick buttons)
+- Don't validate market hours or trading sessions
+- Don't persist selected start times
+
+### Success Criteria
+- [ ] User can select simulation start date/time via UI
+- [ ] Chart displays historical data before selected start time
+- [ ] Selected start time validation works correctly
+- [ ] Historical context data loads properly from backend
+- [ ] Ready to begin simulation from selected start point
+
+---
+
 ## Task 5: Price Replay Simulation Engine
 **Duration**: 2-3 days  
 **Priority**: Critical
 
 ### Description
-Create simulation engine that replays historical data at fixed speeds using the WebSocket foundation from Task 4.
+Create simulation engine that replays historical data at fixed speeds using the WebSocket foundation from Task 4, starting from the user-selected time point.
 
 ### Requirements
-- Replay historical data sequentially at 1x, 5x, 10x speeds
+- Replay historical data sequentially at 1x, 5x, 10x speeds from selected start time
 - Start/pause/resume/stop controls
 - Current price tracking during simulation
 - Stream price updates via existing WebSocket
@@ -180,7 +215,7 @@ Create simulation engine that replays historical data at fixed speeds using the 
 1. Create simulation engine with goroutines
 2. Implement fixed speed controls (1x, 5x, 10x)
 3. Add start/pause/resume/stop state management
-4. Implement timer-based historical data replay
+4. Implement timer-based historical data replay from selected start time
 5. Stream price updates through WebSocket from Task 4
 6. Track current simulation price and position in dataset
 7. Create simulation control API endpoints

@@ -149,6 +149,43 @@ func (b *BinanceService) ValidateInterval(interval string) bool {
 	return validIntervals[interval]
 }
 
+// GetEarliestAvailableTime fetches the earliest available data point for a symbol
+func (b *BinanceService) GetEarliestAvailableTime(symbol string) (int64, error) {
+	// Apply rate limiting
+	if err := b.waitForRateLimit(); err != nil {
+		return 0, fmt.Errorf("rate limit error: %w", err)
+	}
+
+	// Validate supported symbols
+	if !b.isSupportedSymbol(symbol) {
+		return 0, fmt.Errorf("unsupported symbol: %s. Only BTCUSDT and ETHUSDT are supported", symbol)
+	}
+
+	// Get the earliest kline data with limit 1 and start time 0
+	// This will return the oldest available data point
+	klineService := b.client.NewKlinesService().
+		Symbol(symbol).
+		Interval("1d"). // Use daily interval to get the earliest date
+		Limit(1).
+		StartTime(0) // Start from epoch to get earliest available data
+
+	// Execute the request with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	klines, err := klineService.Do(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch earliest kline: %w", err)
+	}
+
+	if len(klines) == 0 {
+		return 0, fmt.Errorf("no data available for symbol %s", symbol)
+	}
+
+	// Return the open time of the first (earliest) kline
+	return klines[0].OpenTime, nil
+}
+
 // waitForRateLimit implements basic rate limiting
 func (b *BinanceService) waitForRateLimit() error {
 	b.requestMutex.Lock()

@@ -80,3 +80,10 @@ type HistoricalDataResponse struct {
 	Symbol string   `json:"symbol"`
 	Data   []OHLCV  `json:"data"`
 }
+
+// EarliestTimeResponse represents the response for earliest available time
+type EarliestTimeResponse struct {
+	Symbol      string `json:"symbol"`
+	EarliestTime int64 `json:"earliestTime"`
+	EarliestTimeISO string `json:"earliestTimeISO"`
+}
