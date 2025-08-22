@@ -9,7 +9,7 @@ import './App.css';
 
 interface SimulationState {
   state: 'stopped' | 'playing' | 'paused';
-  speed: 1 | 5 | 10;
+  speed: number;
   currentPrice: number | null;
   simulationTime: Date | null;
   progress: number;
@@ -21,7 +21,7 @@ function AppContent() {
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [simulationState, setSimulationState] = useState<SimulationState>({
     state: 'stopped',
-    speed: 1,
+    speed: 60, // Default to 60x (1s → 1m)
     currentPrice: null,
     simulationTime: null,
     progress: 0
@@ -39,7 +39,7 @@ function AppContent() {
         setSimulationState(prev => ({
           ...prev,
           state: status.state as 'stopped' | 'playing' | 'paused',
-          speed: status.speed as 1 | 5 | 10,
+          speed: status.speed,
           currentPrice: status.currentPrice || null,
           simulationTime: status.currentTime ? new Date(status.currentTime) : null,
           progress: status.progress
@@ -71,7 +71,7 @@ function AppContent() {
         currentPrice: lastSimulationUpdate.price,
         simulationTime: new Date(lastSimulationUpdate.timestamp),
         progress: lastSimulationUpdate.progress,
-        speed: lastSimulationUpdate.speed as 1 | 5 | 10
+        speed: lastSimulationUpdate.speed
       }));
     }
   }, [lastSimulationUpdate]);
@@ -102,7 +102,7 @@ function AppContent() {
           setSimulationState(prev => ({
             ...prev,
             state: status.state as 'stopped' | 'playing' | 'paused',
-            speed: status.speed as 1 | 5 | 10,
+            speed: status.speed,
             currentPrice: status.currentPrice || null,
             simulationTime: status.currentTime ? new Date(status.currentTime) : null,
             progress: status.progress
@@ -149,7 +149,7 @@ function AppContent() {
     }
   }, []);
 
-  const handleSpeedChange = useCallback(async (speed: 1 | 5 | 10) => {
+  const handleSpeedChange = useCallback(async (speed: number) => {
     try {
       await SimulationApiService.setSpeed(speed);
       setSimulationState(prev => ({ ...prev, speed }));

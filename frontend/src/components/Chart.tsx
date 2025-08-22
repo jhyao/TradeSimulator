@@ -383,7 +383,7 @@ const Chart: React.FC<ChartProps> = ({
 
           if (simulationPriceLine.current) {
             // Update existing price line
-            simulationPriceLine.current.applyOptions(priceLineOptions);
+            // simulationPriceLine.current.applyOptions(priceLineOptions);
           } else {
             // Create new price line
             simulationPriceLine.current = candlestickSeriesRef.current.createPriceLine(priceLineOptions);

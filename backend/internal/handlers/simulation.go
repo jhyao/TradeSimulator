@@ -37,14 +37,14 @@ func (sh *SimulationHandler) StartSimulation(c *gin.Context) {
 		return
 	}
 
-	// Default speed to 1x if not specified
+	// Default speed to 60x if not specified
 	if req.Speed == 0 {
-		req.Speed = 1
+		req.Speed = 60
 	}
 
-	// Validate speed
-	if req.Speed != 1 && req.Speed != 5 && req.Speed != 10 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Speed must be 1, 5, or 10"})
+	// Validate speed (must be positive)
+	if req.Speed <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Speed must be positive"})
 		return
 	}
 

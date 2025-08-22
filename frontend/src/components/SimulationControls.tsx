@@ -1,14 +1,37 @@
 import React, { useState } from 'react';
 
+// Speed presets for the slider
+const SPEED_PRESETS = [
+  { value: 30, label: "30x", description: "2s → 1m" },
+  { value: 60, label: "1m", description: "1s → 1m" },
+  { value: 120, label: "2m", description: "1s → 2m" },
+  { value: 300, label: "5m", description: "1s → 5m" },
+  { value: 600, label: "10m", description: "1s → 10m" },
+  { value: 1800, label: "30m", description: "1s → 30m" },
+  { value: 3600, label: "1h", description: "1s → 1h" },
+];
+
+// Helper function to get speed description
+const getSpeedDescription = (speed: number): string => {
+  const marketMinPerSec = speed / 60;
+  if (marketMinPerSec < 1) {
+    return `${(60/speed).toFixed(1)}s → 1m (${speed}x)`;
+  } else if (marketMinPerSec < 60) {
+    return `1s → ${marketMinPerSec}m (${speed}x)`;
+  } else {
+    return `1s → ${(marketMinPerSec/60).toFixed(1)}h (${speed}x)`;
+  }
+};
+
 interface SimulationControlsProps {
   selectedStartTime: Date | null;
   onStartSimulation: () => void;
   onPauseSimulation: () => void;
   onResumeSimulation: () => void;
   onStopSimulation: () => void;
-  onSpeedChange: (speed: 1 | 5 | 10) => void;
+  onSpeedChange: (speed: number) => void;
   simulationState: 'stopped' | 'playing' | 'paused';
-  currentSpeed: 1 | 5 | 10;
+  currentSpeed: number;
   currentSimulationTime?: Date | null;
   currentPrice?: number | null;
   progress?: number;
@@ -193,26 +216,77 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           ⏹️ Stop
         </button>
 
-        {/* Speed Control */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <label style={{ fontSize: '14px', color: '#555' }}>Speed:</label>
-          <select
-            value={currentSpeed}
-            onChange={(e) => onSpeedChange(Number(e.target.value) as 1 | 5 | 10)}
-            disabled={simulationState === 'stopped' || isLoading}
-            style={{
-              padding: '6px 10px',
-              fontSize: '14px',
-              border: '1px solid #ccc',
-              borderRadius: '4px',
-              backgroundColor: simulationState === 'stopped' ? '#f8f9fa' : 'white',
-              cursor: simulationState === 'stopped' ? 'not-allowed' : 'pointer'
-            }}
-          >
-            <option value={1}>1x</option>
-            <option value={5}>5x</option>
-            <option value={10}>10x</option>
-          </select>
+        {/* Enhanced Speed Control */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '250px' }}>
+          <label style={{ fontSize: '14px', color: '#555', fontWeight: 'bold' }}>
+            Simulation Speed:
+          </label>
+          
+          {/* Speed Slider */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="range"
+              min={30}
+              max={3600}
+              step={30}
+              value={currentSpeed}
+              onChange={(e) => onSpeedChange(Number(e.target.value))}
+              disabled={simulationState === 'stopped' || isLoading}
+              style={{
+                width: '100%',
+                height: '6px',
+                borderRadius: '3px',
+                background: '#ddd',
+                outline: 'none',
+                cursor: simulationState === 'stopped' ? 'not-allowed' : 'pointer'
+              }}
+            />
+          </div>
+          
+          {/* Preset Markers */}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            marginTop: '-5px',
+            paddingLeft: '2px',
+            paddingRight: '2px'
+          }}>
+            {SPEED_PRESETS.map(preset => (
+              <button
+                key={preset.value}
+                onClick={() => onSpeedChange(preset.value)}
+                disabled={simulationState === 'stopped' || isLoading}
+                title={preset.description}
+                style={{
+                  background: currentSpeed === preset.value ? '#007bff' : '#f0f0f0',
+                  color: currentSpeed === preset.value ? 'white' : '#666',
+                  border: '1px solid #ccc',
+                  borderColor: currentSpeed === preset.value ? '#007bff' : '#ccc',
+                  borderRadius: '4px',
+                  padding: '2px 6px',
+                  fontSize: '11px',
+                  cursor: simulationState === 'stopped' ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s',
+                  minWidth: '32px'
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          
+          {/* Current Speed Display */}
+          <div style={{ 
+            textAlign: 'center', 
+            fontSize: '13px', 
+            fontWeight: 'bold',
+            color: '#333',
+            padding: '4px',
+            backgroundColor: '#e9ecef',
+            borderRadius: '4px'
+          }}>
+            {getSpeedDescription(currentSpeed)}
+          </div>
         </div>
       </div>
 
