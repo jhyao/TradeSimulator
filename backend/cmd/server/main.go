@@ -62,12 +62,19 @@ func main() {
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	marketHandler := handlers.NewMarketHandler()
+	wsHandler := handlers.NewWebSocketHandler()
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)
 	
 	// Swagger endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// WebSocket endpoint
+	r.GET("/ws", wsHandler.HandleWebSocket)
+	
+	// Test endpoint for WebSocket broadcasting
+	r.POST("/test/broadcast", wsHandler.TestBroadcast)
 
 	// API routes group
 	api := r.Group("/api/v1")
