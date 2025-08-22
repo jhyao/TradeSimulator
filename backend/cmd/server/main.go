@@ -5,6 +5,7 @@ import (
 	"tradesimulator/internal/config"
 	"tradesimulator/internal/database"
 	"tradesimulator/internal/handlers"
+	"tradesimulator/internal/services"
 	_ "tradesimulator/docs" // Import generated docs
 
 	"github.com/gin-gonic/gin"
@@ -59,10 +60,17 @@ func main() {
 		c.Next()
 	})
 
+	// Initialize services
+	binanceService := services.NewBinanceService()
+	
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	marketHandler := handlers.NewMarketHandler()
 	wsHandler := handlers.NewWebSocketHandler()
+	
+	// Initialize simulation engine and handler
+	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService)
+	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)
@@ -88,6 +96,9 @@ func main() {
 			market.GET("/symbols", marketHandler.GetSupportedSymbols)
 			market.GET("/earliest-time/:symbol", marketHandler.GetEarliestTime)
 		}
+		
+		// Simulation endpoints
+		handlers.RegisterSimulationRoutes(api, simulationHandler)
 	}
 
 	// Start server

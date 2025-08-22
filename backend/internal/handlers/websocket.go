@@ -146,6 +146,11 @@ func (h *Hub) BroadcastMessage(msgType MessageType, data interface{}) {
 	h.broadcast <- jsonData
 }
 
+// BroadcastMessageString broadcasts a message with string message type (for services)
+func (h *Hub) BroadcastMessageString(msgType string, data interface{}) {
+	h.BroadcastMessage(MessageType(msgType), data)
+}
+
 // GetClientCount returns the number of connected clients
 func (h *Hub) GetClientCount() int {
 	h.mutex.RLock()

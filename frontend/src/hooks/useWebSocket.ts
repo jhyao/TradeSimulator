@@ -17,6 +17,24 @@ export interface ConnectionStatusData {
   timestamp: number;
 }
 
+export interface SimulationUpdateData {
+  symbol: string;
+  price: number;
+  timestamp: number;
+  ohlcv: {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  };
+  simulationTime: string;
+  progress: number;
+  state: string;
+  speed: number;
+}
+
 export enum ConnectionState {
   CONNECTING = 'connecting',
   CONNECTED = 'connected',

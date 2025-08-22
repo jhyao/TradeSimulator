@@ -19,9 +19,29 @@ interface ChartProps {
   symbol: string;
   timeframe: string;
   selectedStartTime?: Date | null;
+  simulationState?: 'stopped' | 'playing' | 'paused';
+  simulationData?: {
+    price: number;
+    timestamp: number;
+    ohlcv: {
+      time: number;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+    };
+    simulationTime: string;
+  } | null;
 }
 
-const Chart: React.FC<ChartProps> = ({ symbol, timeframe, selectedStartTime }) => {
+const Chart: React.FC<ChartProps> = ({ 
+  symbol, 
+  timeframe, 
+  selectedStartTime, 
+  simulationState, 
+  simulationData 
+}) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +55,7 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe, selectedStartTime }) =
   const hasReachedEarliestData = useRef(false);
   const [earliestAvailableTime, setEarliestAvailableTime] = useState<number | null>(null);
   const isComponentMounted = useRef(true);
+  const simulationPriceLine = useRef<any>(null);
 
   const fetchEarliestTime = useCallback(async () => {
     try {
@@ -325,6 +346,71 @@ const Chart: React.FC<ChartProps> = ({ symbol, timeframe, selectedStartTime }) =
       chart.remove();
     };
   }, [symbol, timeframe, initLoad, loadMoreData]);
+
+  // Handle simulation real-time updates
+  useEffect(() => {
+    if (simulationState === 'playing' || simulationState === 'paused') {
+      if (simulationData && chartRef.current && candlestickSeriesRef.current && volumeSeriesRef.current) {
+        try {
+          // Update candle data with real-time OHLCV
+          const candleUpdate = {
+            time: Math.floor(simulationData.ohlcv.time / 1000) as any,
+            open: simulationData.ohlcv.open,
+            high: simulationData.ohlcv.high,
+            low: simulationData.ohlcv.low,
+            close: simulationData.ohlcv.close,
+          };
+
+          const volumeUpdate = {
+            time: Math.floor(simulationData.ohlcv.time / 1000) as any,
+            value: simulationData.ohlcv.volume,
+            color: simulationData.ohlcv.close >= simulationData.ohlcv.open ? '#26a69a' : '#ef5350',
+          };
+
+          // Update the chart with new candle data
+          candlestickSeriesRef.current.update(candleUpdate);
+          volumeSeriesRef.current.update(volumeUpdate);
+
+          // Add or update simulation price line for current price
+          const priceLineOptions = {
+            price: simulationData.price,
+            color: '#ff6b6b',
+            lineWidth: 2,
+            lineStyle: 2, // dashed line
+            axisLabelVisible: true,
+            title: `Sim: $${simulationData.price.toFixed(2)}`,
+          };
+
+          if (simulationPriceLine.current) {
+            // Update existing price line
+            simulationPriceLine.current.applyOptions(priceLineOptions);
+          } else {
+            // Create new price line
+            simulationPriceLine.current = candlestickSeriesRef.current.createPriceLine(priceLineOptions);
+          }
+
+          // Log the update for debugging
+          console.log(`Simulation candle update:`, {
+            time: new Date(simulationData.ohlcv.time).toLocaleString(),
+            ohlcv: simulationData.ohlcv,
+            price: simulationData.price
+          });
+        } catch (error) {
+          console.warn('Could not update simulation candle:', error);
+        }
+      }
+    } else if (simulationState === 'stopped') {
+      // Clear simulation markers when stopped
+      if (simulationPriceLine.current && candlestickSeriesRef.current) {
+        try {
+          candlestickSeriesRef.current.removePriceLine(simulationPriceLine.current);
+          simulationPriceLine.current = null;
+        } catch (error) {
+          console.warn('Could not remove simulation price line:', error);
+        }
+      }
+    }
+  }, [simulationState, simulationData]);
 
   if (error) {
     return (
