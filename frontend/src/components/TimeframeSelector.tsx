@@ -5,53 +5,110 @@ interface TimeframeSelectorProps {
   onTimeframeChange: (timeframe: string) => void;
   disabled?: boolean;
   compact?: boolean;
+  currentSpeed?: number; // For speed-based validation
 }
+
+// Available timeframes with their duration in minutes
+const TIMEFRAMES = [
+  { value: "1m", label: "1m", minutes: 1 },
+  { value: "5m", label: "5m", minutes: 5 },
+  { value: "15m", label: "15m", minutes: 15 },
+  { value: "1h", label: "1h", minutes: 60 },
+  { value: "4h", label: "4h", minutes: 240 },
+  { value: "1d", label: "1d", minutes: 1440 },
+];
+
+// Calculate minimum allowed timeframe based on speed
+const getMinAllowedTimeframe = (speed: number): string => {
+  // Y = speed / 60 minutes (how many market minutes per real second)
+  const marketMinutesPerSecond = speed / 60;
+  
+  // Find the largest timeframe that's <= marketMinutesPerSecond
+  // This matches the original requirement specification
+  let minTimeframe = "1m"; // default to smallest if no match
+  for (const tf of TIMEFRAMES) {
+    if (tf.minutes <= marketMinutesPerSecond) {
+      minTimeframe = tf.value;
+    }
+  }
+  
+  return minTimeframe;
+};
+
+// Check if timeframe is allowed for given speed
+export const isTimeframeAllowed = (timeframe: string, speed: number): boolean => {
+  const minAllowed = getMinAllowedTimeframe(speed);
+  
+  const timeframeMinutes = TIMEFRAMES.find(tf => tf.value === timeframe)?.minutes || 1;
+  const minAllowedMinutes = TIMEFRAMES.find(tf => tf.value === minAllowed)?.minutes || 1440;
+  
+  return timeframeMinutes >= minAllowedMinutes;
+};
+
+// Export the min allowed timeframe function for use in App.tsx
+export { getMinAllowedTimeframe };
 
 const TimeframeSelector: React.FC<TimeframeSelectorProps> = ({
   timeframe,
   onTimeframeChange,
   disabled = false,
-  compact = false
+  compact = false,
+  currentSpeed = 60 // Default speed
 }) => {
-  const timeframes = [
-    { value: '1m', label: '1m' },
-    { value: '5m', label: '5m' },
-    { value: '15m', label: '15m' },
-    { value: '1h', label: '1h' },
-    { value: '4h', label: '4h' },
-    { value: '1d', label: '1d' },
-    { value: '1w', label: '1w' },
-    { value: '1M', label: '1M' },
-  ];
+  // Filter timeframes based on speed if speed is provided
+  const availableTimeframes = currentSpeed ? TIMEFRAMES.filter(tf => isTimeframeAllowed(tf.value, currentSpeed)) : TIMEFRAMES;
+  const isCurrentTimeframeValid = currentSpeed ? isTimeframeAllowed(timeframe, currentSpeed) : true;
 
-  if (compact) {
+  // compact mode: dropdown; else buttons
+  if (!compact) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '13px', color: '#555', fontWeight: 'bold' }}>
           Timeframe:
         </span>
-        <div style={{ display: 'flex', gap: '2px' }}>
-          {timeframes.map(tf => (
-            <button
-              key={tf.value}
-              onClick={() => onTimeframeChange(tf.value)}
-              disabled={disabled}
-              style={{
-                padding: '4px 8px',
-                fontSize: '12px',
-                border: '1px solid #dee2e6',
-                borderRadius: '4px',
-                backgroundColor: timeframe === tf.value ? '#007bff' : '#f8f9fa',
-                color: timeframe === tf.value ? 'white' : '#333',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                fontWeight: timeframe === tf.value ? '600' : '400',
-                transition: 'all 0.2s',
-                minWidth: '32px'
-              }}
-            >
-              {tf.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+          {TIMEFRAMES.map(tf => {
+            const isAvailable = availableTimeframes.some(avail => avail.value === tf.value);
+            const isSelected = timeframe === tf.value;
+            return (
+              <button
+                key={tf.value}
+                onClick={() => onTimeframeChange(tf.value)}
+                disabled={disabled || !isAvailable}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  border: '1px solid #dee2e6',
+                  borderColor: !isCurrentTimeframeValid && isSelected ? '#dc3545' : '#dee2e6',
+                  borderRadius: '4px',
+                  backgroundColor: isSelected ? '#007bff' : isAvailable ? '#f8f9fa' : '#e9ecef',
+                  color: isSelected ? 'white' : isAvailable ? '#333' : '#6c757d',
+                  cursor: disabled || !isAvailable ? 'not-allowed' : 'pointer',
+                  fontWeight: isSelected ? '600' : '400',
+                  transition: 'all 0.2s',
+                  minWidth: '32px',
+                  opacity: isAvailable ? 1 : 0.5
+                }}
+                title={!isAvailable ? `Not available at ${currentSpeed}x speed` : undefined}
+              >
+                {tf.label}
+              </button>
+            );
+          })}
+          {/* Validation indicator */}
+          {!isCurrentTimeframeValid && (
+            <span style={{
+              fontSize: '10px',
+              color: '#dc3545',
+              backgroundColor: '#f8d7da',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              marginLeft: '8px',
+              whiteSpace: 'nowrap'
+            }}>
+              Min: {getMinAllowedTimeframe(currentSpeed)}
+            </span>
+          )}
         </div>
       </div>
     );
@@ -69,19 +126,40 @@ const TimeframeSelector: React.FC<TimeframeSelectorProps> = ({
         style={{
           padding: '8px 12px',
           fontSize: '14px',
-          border: '1px solid #ddd',
+          border: '1px solid',
+          borderColor: !isCurrentTimeframeValid ? '#dc3545' : '#ddd',
           borderRadius: '4px',
-          backgroundColor: disabled ? '#f5f5f5' : 'white',
+          backgroundColor: disabled ? '#f5f5f5' : !isCurrentTimeframeValid ? '#fff5f5' : 'white',
           cursor: disabled ? 'not-allowed' : 'pointer',
           color: disabled ? '#999' : '#333'
         }}
       >
-        {timeframes.map(tf => (
-          <option key={tf.value} value={tf.value}>
-            {tf.label}
-          </option>
-        ))}
+        {TIMEFRAMES.map(tf => {
+          const isAvailable = availableTimeframes.some(avail => avail.value === tf.value);
+          return (
+            <option 
+              key={tf.value} 
+              value={tf.value}
+              disabled={!isAvailable}
+            >
+              {tf.label} {!isAvailable ? ' (restricted)' : ''}
+            </option>
+          );
+        })}
       </select>
+      {/* Validation message */}
+      {!isCurrentTimeframeValid && (
+        <div style={{
+          fontSize: '12px',
+          color: '#dc3545',
+          backgroundColor: '#f8d7da',
+          border: '1px solid #f5c6cb',
+          borderRadius: '3px',
+          padding: '4px 8px'
+        }}>
+          Min timeframe for {currentSpeed}x speed: {getMinAllowedTimeframe(currentSpeed)}
+        </div>
+      )}
     </div>
   );
 };

@@ -3,7 +3,7 @@ import Chart from './components/Chart';
 import StartTimeSelector from './components/StartTimeSelector';
 import SimulationControls from './components/SimulationControls';
 import SymbolSelector from './components/SymbolSelector';
-import TimeframeSelector from './components/TimeframeSelector';
+import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/TimeframeSelector';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { SimulationApiService } from './services/simulationApi';
 import './App.css';
@@ -167,10 +167,26 @@ function AppContent() {
     try {
       await SimulationApiService.setSpeed(speed);
       setSimulationState(prev => ({ ...prev, speed }));
+      
+      // Check if current timeframe is still valid with new speed
+      if (!isTimeframeAllowed(timeframe, speed)) {
+        const minAllowedTimeframe = getMinAllowedTimeframe(speed);
+        console.log(`Speed change to ${speed}x makes current timeframe ${timeframe} invalid. Auto-switching to ${minAllowedTimeframe}`);
+        
+        // Auto-adjust timeframe to minimum allowed
+        try {
+          await handleTimeframeChange(minAllowedTimeframe);
+        } catch (timeframeError) {
+          console.error('Failed to auto-adjust timeframe:', timeframeError);
+          // Don't alert here as the speed change itself succeeded
+        }
+      }
     } catch (error) {
       console.error('Failed to change speed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to change speed: ${errorMessage}`);
     }
-  }, []);
+  }, [timeframe, handleTimeframeChange]);
 
   return (
     <div className="App">
@@ -250,9 +266,6 @@ function AppContent() {
               onSpeedChange={handleSpeedChange}
               simulationState={simulationState.state}
               currentSpeed={simulationState.speed}
-              currentSimulationTime={simulationState.simulationTime}
-              currentPrice={simulationState.currentPrice}
-              progress={simulationState.progress}
               symbol={symbol}
               blockType="speed"
             />
@@ -275,9 +288,6 @@ function AppContent() {
               onSpeedChange={handleSpeedChange}
               simulationState={simulationState.state}
               currentSpeed={simulationState.speed}
-              currentSimulationTime={simulationState.simulationTime}
-              currentPrice={simulationState.currentPrice}
-              progress={simulationState.progress}
               symbol={symbol}
               blockType="controls"
             />
@@ -305,7 +315,8 @@ function AppContent() {
             <TimeframeSelector
               timeframe={timeframe}
               onTimeframeChange={handleTimeframeChange}
-              compact={true}
+              compact={false}
+              currentSpeed={simulationState.speed}
             />
           </div>
           

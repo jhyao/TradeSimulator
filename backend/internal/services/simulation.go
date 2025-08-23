@@ -174,6 +174,12 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, 
 		return fmt.Errorf("invalid speed: %d, must be positive", speed)
 	}
 
+	// Validate timeframe is compatible with speed
+	if !se.isTimeframeAllowed(interval, speed) {
+		minAllowed := se.getMinAllowedTimeframe(speed)
+		return fmt.Errorf("timeframe %s not allowed at %dx speed. Use %s or higher", interval, speed, minAllowed)
+	}
+
 	// Determine optimal base interval for progressive updates
 	se.symbol = symbol
 	se.interval = interval
@@ -501,6 +507,48 @@ func (se *SimulationEngine) parseTimeframeToDuration(timeframe string) time.Dura
 	}
 }
 
+// getMinAllowedTimeframe calculates minimum allowed display timeframe based on speed
+func (se *SimulationEngine) getMinAllowedTimeframe(speed int) string {
+	// Y = speed / 60 minutes (how many market minutes per real second)
+	marketMinutesPerSecond := float64(speed) / 60.0
+	
+	// Find the largest timeframe that's <= marketMinutesPerSecond
+	// This matches the original requirement specification
+	// Available timeframes in ascending order
+	timeframes := []struct{
+		name string
+		minutes float64
+	}{
+		{"1m", 1},
+		{"5m", 5}, 
+		{"15m", 15},
+		{"1h", 60},
+		{"4h", 240},
+		{"1d", 1440},
+	}
+	
+	// Find the largest timeframe that's <= marketMinutesPerSecond
+	minTimeframe := "1m" // default to smallest if no match
+	for _, tf := range timeframes {
+		if tf.minutes <= marketMinutesPerSecond {
+			minTimeframe = tf.name
+		}
+	}
+	
+	return minTimeframe
+}
+
+// isTimeframeAllowed checks if timeframe is allowed for current speed
+func (se *SimulationEngine) isTimeframeAllowed(timeframe string, speed int) bool {
+	minAllowed := se.getMinAllowedTimeframe(speed)
+	
+	// Get timeframe values in minutes for comparison
+	timeframeMinutes := se.parseTimeframeToDuration(timeframe).Minutes()
+	minAllowedMinutes := se.parseTimeframeToDuration(minAllowed).Minutes()
+	
+	return timeframeMinutes >= minAllowedMinutes
+}
+
 func (se *SimulationEngine) Pause() error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
@@ -592,10 +640,21 @@ func (se *SimulationEngine) SetSpeed(speed int) error {
 	return nil
 }
 
+// GetMinAllowedTimeframeForSpeed exposes the min timeframe calculation for frontend
+func (se *SimulationEngine) GetMinAllowedTimeframeForSpeed(speed int) string {
+	return se.getMinAllowedTimeframe(speed)
+}
+
 // SetTimeframe changes the timeframe during simulation
 func (se *SimulationEngine) SetTimeframe(newTimeframe string) error {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
+
+	// Validate timeframe is allowed for current speed
+	if !se.isTimeframeAllowed(newTimeframe, se.speed) {
+		minAllowed := se.getMinAllowedTimeframe(se.speed)
+		return fmt.Errorf("timeframe %s not allowed at %dx speed. Minimum allowed: %s", newTimeframe, se.speed, minAllowed)
+	}
 
 	// If simulation is running, send timeframe change to goroutine via channel
 	if se.state == StatePlaying || se.state == StatePaused {

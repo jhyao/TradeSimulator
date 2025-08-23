@@ -134,8 +134,8 @@ func (sh *SimulationHandler) SetTimeframe(c *gin.Context) {
 		return
 	}
 
-	// Validate timeframe
-	validTimeframes := []string{"1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"}
+	// Validate timeframe format
+	validTimeframes := []string{"1m", "5m", "15m", "1h", "4h", "1d"}
 	valid := false
 	for _, tf := range validTimeframes {
 		if req.Timeframe == tf {
@@ -144,10 +144,11 @@ func (sh *SimulationHandler) SetTimeframe(c *gin.Context) {
 		}
 	}
 	if !valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid timeframe. Must be one of: 1s, 1m, 5m, 15m, 1h, 4h, 1d, 1w, 1M"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid timeframe. Must be one of: 1m, 5m, 15m, 1h, 4h, 1d"})
 		return
 	}
 
+	// Engine handles speed-based validation
 	if err := sh.engine.SetTimeframe(req.Timeframe); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

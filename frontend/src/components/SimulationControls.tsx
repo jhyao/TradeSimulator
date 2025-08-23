@@ -34,11 +34,8 @@ interface SimulationControlsProps {
   onSpeedChange: (speed: number) => void;
   simulationState: 'stopped' | 'playing' | 'paused';
   currentSpeed: number;
-  currentSimulationTime?: Date | null;
-  currentPrice?: number | null;
-  progress?: number;
   symbol?: string;
-  blockType?: 'speed' | 'controls';
+  blockType?: 'speed' | 'controls' | 'timeframe';
 }
 
 const SimulationControls: React.FC<SimulationControlsProps> = ({
@@ -50,9 +47,6 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   onSpeedChange,
   simulationState,
   currentSpeed,
-  currentSimulationTime,
-  currentPrice,
-  progress,
   symbol = 'BTCUSDT',
   blockType
 }) => {
@@ -97,7 +91,6 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
       setIsLoading(false);
     }
   };
-
 
   // Speed Block
   if (blockType === 'speed') {
