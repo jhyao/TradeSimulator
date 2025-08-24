@@ -28,8 +28,7 @@ type SimulationEngine struct {
 	mu             sync.RWMutex
 	state          SimulationState
 	speed          int            // 1, 5, 10, 60, 120, 300, etc.
-	currentIndex   int            // Position in historical dataset
-	dataset        []models.OHLCV // Historical data from selected start time
+	currentIndex   int            // Position in baseDataset
 	ticker         *time.Ticker   // Controls replay speed
 	hub            WebSocketHub   // WebSocket broadcasting
 	symbol         string
@@ -49,6 +48,13 @@ type SimulationEngine struct {
 	// Dynamic change channels
 	speedChangeChan     chan int    // For dynamic speed changes
 	timeframeChangeChan chan string // For dynamic timeframe changes
+
+	// Continuous data loading
+	dataLoadThreshold float64   // Threshold (0.0-1.0) to trigger data loading
+	maxBufferSize     int       // Maximum number of candles to keep in memory
+	isLoadingData     bool      // Flag to prevent concurrent loading
+	dataLoadChan      chan bool // Channel to signal successful data load
+	lastDataLoadTime  time.Time // Last timestamp of loaded data
 }
 
 type SimulationUpdateData struct {
@@ -158,6 +164,9 @@ func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService) *Simu
 		binanceService:      binanceService,
 		speedChangeChan:     make(chan int, 1),
 		timeframeChangeChan: make(chan string, 1),
+		dataLoadThreshold:   0.8,  // Load more data when 80% consumed
+		maxBufferSize:       5000, // Keep max 5000 candles in memory
+		dataLoadChan:        make(chan bool, 1),
 	}
 }
 
@@ -196,15 +205,21 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, 
 		return fmt.Errorf("no historical data available from start time")
 	}
 
-	// Keep original dataset for display reference and base dataset for progression
-	displayDataset, _ := se.loadHistoricalDataset(symbol, interval, startTime)
-	se.dataset = displayDataset
+	// displayDataset removed - only using baseDataset for simulation progression
 	se.baseDataset = baseDataset
 	se.startTime = startTime
 	se.currentSimTime = startTime
 	se.currentIndex = 0
 	se.currentProgressive = nil
 	se.state = StatePlaying
+
+	// Initialize continuous data loading state
+	se.isLoadingData = false
+	if len(baseDataset) > 0 {
+		se.lastDataLoadTime = time.Unix(baseDataset[len(baseDataset)-1].Time/1000, 0)
+	} else {
+		se.lastDataLoadTime = startTime
+	}
 
 	log.Printf("Starting simulation: %s %s from %s with %d base candles (%s) at %dx speed",
 		symbol, interval, startTime.Format(time.RFC3339), len(baseDataset), se.baseInterval, speed)
@@ -219,18 +234,11 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, 
 }
 
 func (se *SimulationEngine) loadHistoricalDataset(symbol, interval string, startTime time.Time) ([]models.OHLCV, error) {
-	// Calculate end time - get data for about 24-48 hours forward
-	endTime := startTime.Add(48 * time.Hour)
-	if endTime.After(time.Now()) {
-		endTime = time.Now()
-	}
+	log.Printf("Loading historical data from %s (limit 1000)", startTime.Format(time.RFC3339))
 
-	log.Printf("Loading historical data from %s to %s", startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
-
-	// Use binance service to fetch historical data
+	// Use binance service to fetch historical data - let API return up to 1000 records
 	startTimeMs := startTime.Unix() * 1000
-	endTimeMs := endTime.Unix() * 1000
-	data, err := se.binanceService.GetHistoricalData(symbol, interval, 1000, &startTimeMs, &endTimeMs)
+	data, err := se.binanceService.GetHistoricalData(symbol, interval, 30, &startTimeMs, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch historical data: %w", err)
 	}
@@ -254,15 +262,21 @@ func (se *SimulationEngine) runSimulation() {
 		case <-se.ticker.C:
 			se.mu.Lock()
 			if se.state == StatePlaying {
+				// Check if we need to load more data before processing
+				se.checkDataLoadingNeeded()
+
 				if se.processNextProgressiveUpdate() {
 					se.broadcastProgressiveUpdate()
 				} else {
-					// Reached end of dataset
-					log.Printf("Simulation reached end of base dataset")
-					se.state = StateStopped
-					se.broadcastStateChange("simulation_stop", "Simulation completed - reached end of data")
-					se.mu.Unlock()
-					return
+					// Reached end of dataset - but don't stop immediately if we're loading more data
+					if !se.isLoadingData {
+						log.Printf("Simulation reached end of base dataset")
+						se.state = StateStopped
+						se.broadcastStateChange("simulation_stop", "Simulation completed - reached end of data")
+						se.mu.Unlock()
+						return
+					}
+					// If we're loading data, continue the simulation loop
 				}
 			}
 			se.mu.Unlock()
@@ -286,6 +300,17 @@ func (se *SimulationEngine) runSimulation() {
 				se.broadcastStateChange("simulation_error", fmt.Sprintf("Failed to change timeframe: %v", err))
 			} else {
 				se.broadcastStateChange("simulation_timeframe_change", fmt.Sprintf("Timeframe changed to %s", newTimeframe))
+			}
+			se.mu.Unlock()
+
+		case dataLoadSuccess := <-se.dataLoadChan:
+			se.mu.Lock()
+			if dataLoadSuccess {
+				log.Printf("Successfully loaded more historical data")
+				se.broadcastStateChange("simulation_data_loaded", "Additional historical data loaded")
+			} else {
+				log.Printf("Failed to load more historical data")
+				se.broadcastStateChange("simulation_error", "Failed to load additional historical data")
 			}
 			se.mu.Unlock()
 
@@ -391,8 +416,8 @@ func (se *SimulationEngine) broadcastProgressiveUpdate() {
 		return
 	}
 
-	// Calculate progress based on base dataset position
-	progress := float64(se.currentIndex) / float64(len(se.baseDataset)) * 100
+	// Progress calculation placeholder - will be time-based in future
+	progress := float64(0)
 
 	updateData := SimulationUpdateData{
 		Symbol:         se.symbol,
@@ -408,27 +433,7 @@ func (se *SimulationEngine) broadcastProgressiveUpdate() {
 	se.hub.BroadcastMessageString("simulation_update", updateData)
 }
 
-func (se *SimulationEngine) broadcastCurrentPrice() {
-	if se.currentIndex >= len(se.dataset) {
-		return
-	}
-
-	currentCandle := se.dataset[se.currentIndex]
-	progress := float64(se.currentIndex) / float64(len(se.dataset)) * 100
-
-	updateData := SimulationUpdateData{
-		Symbol:         se.symbol,
-		Price:          currentCandle.Close,
-		Timestamp:      currentCandle.Time,
-		OHLCV:          currentCandle,
-		SimulationTime: time.Unix(currentCandle.Time/1000, 0).Format(time.RFC3339),
-		Progress:       progress,
-		State:          string(se.state),
-		Speed:          se.speed,
-	}
-
-	se.hub.BroadcastMessageString("simulation_update", updateData)
-}
+// broadcastCurrentPrice - removed as it was using unused displayDataset
 
 func (se *SimulationEngine) broadcastStateChange(messageType, message string) {
 	stateData := map[string]interface{}{
@@ -511,22 +516,22 @@ func (se *SimulationEngine) parseTimeframeToDuration(timeframe string) time.Dura
 func (se *SimulationEngine) getMinAllowedTimeframe(speed int) string {
 	// Y = speed / 60 minutes (how many market minutes per real second)
 	marketMinutesPerSecond := float64(speed) / 60.0
-	
+
 	// Find the largest timeframe that's <= marketMinutesPerSecond
 	// This matches the original requirement specification
 	// Available timeframes in ascending order
-	timeframes := []struct{
-		name string
+	timeframes := []struct {
+		name    string
 		minutes float64
 	}{
 		{"1m", 1},
-		{"5m", 5}, 
+		{"5m", 5},
 		{"15m", 15},
 		{"1h", 60},
 		{"4h", 240},
 		{"1d", 1440},
 	}
-	
+
 	// Find the largest timeframe that's <= marketMinutesPerSecond
 	minTimeframe := "1m" // default to smallest if no match
 	for _, tf := range timeframes {
@@ -534,18 +539,18 @@ func (se *SimulationEngine) getMinAllowedTimeframe(speed int) string {
 			minTimeframe = tf.name
 		}
 	}
-	
+
 	return minTimeframe
 }
 
 // isTimeframeAllowed checks if timeframe is allowed for current speed
 func (se *SimulationEngine) isTimeframeAllowed(timeframe string, speed int) bool {
 	minAllowed := se.getMinAllowedTimeframe(speed)
-	
+
 	// Get timeframe values in minutes for comparison
 	timeframeMinutes := se.parseTimeframeToDuration(timeframe).Minutes()
 	minAllowedMinutes := se.parseTimeframeToDuration(minAllowed).Minutes()
-	
+
 	return timeframeMinutes >= minAllowedMinutes
 }
 
@@ -717,14 +722,7 @@ func (se *SimulationEngine) handleTimeframeChange(newTimeframe string) error {
 	// Reset progressive candle to start fresh with new timeframe
 	se.currentProgressive = nil
 
-	// Reload display dataset for new timeframe (for status/progress tracking)
-	newDisplayDataset, err := se.loadHistoricalDataset(se.symbol, se.interval, se.startTime)
-	if err != nil {
-		log.Printf("Warning: failed to reload display dataset: %v", err)
-		// Don't fail the operation, just use existing dataset
-	} else {
-		se.dataset = newDisplayDataset
-	}
+	// displayDataset reload removed - no longer needed
 
 	log.Printf("Timeframe change completed: %s -> %s (base: %s)", oldInterval, newTimeframe, se.baseInterval)
 	return nil
@@ -766,16 +764,14 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 	var currentPrice float64
 	var currentTime string
 
-	if se.currentIndex > 0 && se.currentIndex <= len(se.dataset) {
-		currentCandle := se.dataset[se.currentIndex-1]
-		currentPrice = currentCandle.Close
-		currentTime = time.Unix(currentCandle.Time/1000, 0).Format(time.RFC3339)
+	// Get current price from progressive candle or baseDataset
+	if se.currentProgressive != nil {
+		currentPrice = se.currentProgressive.CurrentOHLCV.Close
+		currentTime = se.currentSimTime.Format(time.RFC3339)
 	}
 
+	// Progress calculation placeholder - will be time-based in future
 	progress := float64(0)
-	if len(se.dataset) > 0 {
-		progress = float64(se.currentIndex) / float64(len(se.dataset)) * 100
-	}
 
 	return SimulationStatus{
 		State:        string(se.state),
@@ -783,7 +779,7 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 		Interval:     se.interval,
 		Speed:        se.speed,
 		CurrentIndex: se.currentIndex,
-		TotalCandles: len(se.dataset),
+		TotalCandles: len(se.baseDataset),
 		Progress:     progress,
 		StartTime:    se.startTime.Format(time.RFC3339),
 		CurrentTime:  currentTime,
@@ -795,8 +791,8 @@ func (se *SimulationEngine) GetCurrentPrice() float64 {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
-	if se.currentIndex > 0 && se.currentIndex <= len(se.dataset) {
-		return se.dataset[se.currentIndex-1].Close
+	if se.currentProgressive != nil {
+		return se.currentProgressive.CurrentOHLCV.Close
 	}
 	return 0
 }
@@ -823,4 +819,130 @@ func (se *SimulationEngine) Cleanup() {
 	}
 
 	log.Printf("Simulation engine cleanup completed")
+}
+
+// loadMoreHistoricalData loads additional historical data from the last loaded timestamp
+func (se *SimulationEngine) loadMoreHistoricalData() error {
+	if se.isLoadingData {
+		return nil // Already loading data
+	}
+
+	se.isLoadingData = true
+	defer func() { se.isLoadingData = false }()
+
+	// Calculate start time for next data chunk (use last candle's timestamp + 1ms)
+	var startTimeMs int64
+	if len(se.baseDataset) > 0 {
+		lastCandle := se.baseDataset[len(se.baseDataset)-1]
+		startTimeMs = lastCandle.Time + 1
+	} else {
+		// Fallback to last known time
+		startTimeMs = se.lastDataLoadTime.Unix() * 1000
+	}
+
+	startTime := time.Unix(startTimeMs/1000, 0)
+	log.Printf("Loading more historical data from %s (limit 1000) (%s, %s)",
+		startTime.Format(time.RFC3339), se.symbol, se.baseInterval)
+
+	// Fetch new data chunk with retry logic
+	var newData []models.OHLCV
+	var err error
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		newData, err = se.binanceService.GetHistoricalData(se.symbol, se.baseInterval, 30, &startTimeMs, nil)
+		if err == nil {
+			break
+		}
+
+		if attempt < maxRetries {
+			waitTime := time.Duration(attempt) * 2 * time.Second // Exponential backoff: 2s, 4s, 6s
+			log.Printf("Data loading attempt %d failed: %v. Retrying in %v...", attempt, err, waitTime)
+			time.Sleep(waitTime)
+		}
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to load more historical data after %d attempts: %w", maxRetries, err)
+	}
+
+	if len(newData) == 0 {
+		log.Printf("No more historical data available")
+		return nil
+	}
+
+	// Append new data to existing dataset
+	se.baseDataset = append(se.baseDataset, newData...)
+	se.lastDataLoadTime = time.Unix(newData[len(newData)-1].Time/1000, 0)
+
+	log.Printf("Loaded %d additional candles, total base dataset size: %d", len(newData), len(se.baseDataset))
+
+	// displayDataset loading removed - no longer needed
+
+	// Perform memory cleanup if needed
+	se.cleanupOldData()
+
+	return nil
+}
+
+// cleanupOldData removes old candles from memory to prevent unlimited growth
+func (se *SimulationEngine) cleanupOldData() {
+	if len(se.baseDataset) <= se.maxBufferSize {
+		return // No cleanup needed
+	}
+
+	// Keep the most recent candles and remove old ones
+	// Leave some buffer before current position to allow for rewind scenarios
+	minKeepIndex := se.currentIndex - 100 // Keep 100 candles before current position
+	if minKeepIndex < 0 {
+		minKeepIndex = 0
+	}
+
+	removeCount := len(se.baseDataset) - se.maxBufferSize
+	if removeCount > minKeepIndex {
+		removeCount = minKeepIndex // Don't remove too close to current position
+	}
+
+	if removeCount > 0 {
+		// Remove old data from beginning
+		se.baseDataset = se.baseDataset[removeCount:]
+		se.currentIndex -= removeCount
+
+		// displayDataset cleanup removed - no longer needed
+
+		log.Printf("Cleaned up %d old candles, current index adjusted to %d", removeCount, se.currentIndex)
+	}
+}
+
+// checkDataLoadingNeeded checks if more data loading is needed based on current position
+func (se *SimulationEngine) checkDataLoadingNeeded() {
+	if se.isLoadingData {
+		return // Already loading
+	}
+
+	// Check if we're approaching the end of available data
+	if len(se.baseDataset) == 0 {
+		return
+	}
+
+	progress := float64(se.currentIndex) / float64(len(se.baseDataset))
+	if progress >= se.dataLoadThreshold {
+		// Trigger background data loading
+		go func() {
+			if err := se.loadMoreHistoricalData(); err != nil {
+				log.Printf("Failed to load more data: %v", err)
+				// Notify simulation loop about data loading failure
+				select {
+				case se.dataLoadChan <- false:
+				default:
+				}
+			} else {
+				// Notify simulation loop about successful data loading
+				select {
+				case se.dataLoadChan <- true:
+				default:
+				}
+			}
+		}()
+	}
+
 }
