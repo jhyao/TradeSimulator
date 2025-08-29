@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 
+	"tradesimulator/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -35,6 +36,9 @@ const (
 	SimulationSetSpeed  MessageType = "simulation_control_set_speed"
 	SimulationSetTimeframe MessageType = "simulation_control_set_timeframe"
 	SimulationGetStatus MessageType = "simulation_control_get_status"
+	// Order control messages
+	OrderPlace          MessageType = "order_place"
+	OrderCancel         MessageType = "order_cancel"
 )
 
 // WebSocketMessage represents a WebSocket message
@@ -80,6 +84,20 @@ type SimulationControlResponse struct {
 	Error   string      `json:"error,omitempty"`
 }
 
+// Order control message structures
+type OrderPlaceData struct {
+	Symbol   string  `json:"symbol"`
+	Side     string  `json:"side"`     // "buy" or "sell"
+	Quantity float64 `json:"quantity"`
+}
+
+type OrderControlResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
 // Client represents a WebSocket client
 type Client struct {
 	Conn   *websocket.Conn
@@ -87,6 +105,7 @@ type Client struct {
 	Hub    *Hub
 	ID     string
 	SimulationHandler *SimulationHandler // Reference to handle simulation control messages
+	OrderHandler      *OrderHandler      // Reference to handle order messages
 }
 
 // Hub maintains active clients and broadcasts messages
@@ -194,6 +213,7 @@ func (h *Hub) GetClientCount() int {
 type WebSocketHandler struct {
 	hub *Hub
 	simulationHandler *SimulationHandler
+	orderHandler      *OrderHandler
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
@@ -209,6 +229,11 @@ func NewWebSocketHandler() *WebSocketHandler {
 // SetSimulationHandler sets the simulation handler reference for message processing
 func (wh *WebSocketHandler) SetSimulationHandler(sh *SimulationHandler) {
 	wh.simulationHandler = sh
+}
+
+// SetOrderHandler sets the order handler reference for message processing
+func (wh *WebSocketHandler) SetOrderHandler(oh *OrderHandler) {
+	wh.orderHandler = oh
 }
 
 // HandleWebSocket upgrades HTTP connection to WebSocket and manages client
@@ -229,6 +254,7 @@ func (wh *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		Hub:  wh.hub,
 		ID:   clientID,
 		SimulationHandler: wh.simulationHandler,
+		OrderHandler:      wh.orderHandler,
 	}
 	
 	// Register client
@@ -332,6 +358,8 @@ func (c *Client) handleControlMessage(messageBytes []byte) {
 		c.handleSetTimeframe(message.Data)
 	case SimulationGetStatus:
 		c.handleGetStatus()
+	case OrderPlace:
+		c.handlePlaceOrder(message.Data)
 	default:
 		log.Printf("Unknown control message type from client %s: %s", c.ID, message.Type)
 	}
@@ -457,4 +485,79 @@ func (c *Client) handleSetTimeframe(data interface{}) {
 func (c *Client) handleGetStatus() {
 	status := c.SimulationHandler.engine.GetStatus()
 	c.sendResponse(true, "Status retrieved", status, "")
+}
+
+func (c *Client) handlePlaceOrder(data interface{}) {
+	if c.OrderHandler == nil {
+		log.Printf("No order handler available for client %s", c.ID)
+		c.sendOrderResponse(false, "Order handler not available", nil, "Internal error")
+		return
+	}
+
+	dataBytes, _ := json.Marshal(data)
+	var orderData OrderPlaceData
+	if err := json.Unmarshal(dataBytes, &orderData); err != nil {
+		c.sendOrderResponse(false, "Invalid order data", nil, err.Error())
+		return
+	}
+
+	// Convert side string to OrderSide enum
+	var side string
+	switch orderData.Side {
+	case "buy":
+		side = "buy"
+	case "sell":
+		side = "sell"
+	default:
+		c.sendOrderResponse(false, "Invalid order side", nil, "Side must be 'buy' or 'sell'")
+		return
+	}
+
+	// Place the order (using default user ID 1 for now)
+	order, trade, err := c.OrderHandler.orderService.PlaceMarketOrder(1, orderData.Symbol, models.OrderSide(side), orderData.Quantity)
+	if err != nil {
+		c.sendOrderResponse(false, "Failed to place order", nil, err.Error())
+		return
+	}
+
+	responseData := map[string]interface{}{
+		"order": order,
+	}
+	if trade != nil {
+		responseData["trade"] = trade
+	}
+
+	c.sendOrderResponse(true, "Order placed successfully", responseData, "")
+}
+
+// sendOrderResponse sends an order control response back to the client
+func (c *Client) sendOrderResponse(success bool, message string, data interface{}, errorMsg string) {
+	response := OrderControlResponse{
+		Success: success,
+		Message: message,
+		Data:    data,
+		Error:   errorMsg,
+	}
+
+	responseMsgType := "order_control_response"
+	if !success {
+		responseMsgType = "order_control_error"
+	}
+
+	responseMessage := WebSocketMessage{
+		Type: MessageType(responseMsgType),
+		Data: response,
+	}
+
+	responseData, err := json.Marshal(responseMessage)
+	if err != nil {
+		log.Printf("Error marshaling order response for client %s: %v", c.ID, err)
+		return
+	}
+
+	select {
+	case c.Send <- responseData:
+	default:
+		log.Printf("Client %s send channel full, dropping order response", c.ID)
+	}
 }

@@ -237,29 +237,30 @@ Create simulation engine that replays historical data at fixed speeds using the 
 
 ---
 
-## Task 6: Market Order Execution
-**Duration**: 2-3 days  
+## Task 6.1: Order Placement & WebSocket Notifications
+**Duration**: 1-2 days  
 **Priority**: Critical
 
 ### Description
-Implement market order execution system that creates positions by executing trades at current simulation price.
+Implement order placement, confirmation, execution notification through WebSocket and market order execution engine.
 
 ### Requirements
-- Execute market buy/sell orders at current simulation price
-- Create position/trade records from successful orders
-- Simple 0.1% flat fee calculation
+- Set initial funds when starting simulation
+- Order placement with WebSocket-based confirmation and execution notifications
+- Market order execution engine that processes orders at current simulation price
 - Basic order validation and error handling
+- Real-time order status updates via WebSocket
 
 ### What to Do
 1. Create orders and trades table schema (extend existing database connection)
 2. Create order and trade data structures
-4. Implement market order execution logic
-5. Execute orders at current simulation price from Task 5
-6. Add simple fee calculation (0.1% flat rate)
-7. Store order/trade records in database
-8. Implement order validation (sufficient funds, valid amounts)
-9. Create order API endpoints (POST /orders)
-10. Add basic order placement UI in frontend
+3. Implement market order execution engine
+4. Execute orders at current simulation price from Task 5
+5. Add WebSocket notification system for order events (placed, executed, failed)
+6. Implement order validation (sufficient funds, valid amounts)
+7. Create order message type via websocket 
+8. Add simple fee calculation (0.1% flat rate)
+9. Store order/trade records in database
 
 ### What NOT to Do
 - Don't implement limit orders or stop orders
@@ -267,14 +268,53 @@ Implement market order execution system that creates positions by executing trad
 - Don't implement order queue or matching engine
 - Don't add complex fee structures (maker/taker)
 - Don't implement margin trading or leverage
+- Don't implement UI components yet
 
 ### Success Criteria
-- [ ] Can place market buy order during simulation
-- [ ] Order executes at exact current simulation price
-- [ ] Position created with correct entry price and quantity
+- [ ] Market order execution engine processes orders correctly
+- [ ] Orders execute at exact current simulation price
+- [ ] WebSocket notifications sent for order placement/execution
+- [ ] Position/trade records created correctly
 - [ ] Fees calculated and deducted correctly
 - [ ] Order validation prevents invalid trades
-- [ ] Can place sell order to close position
+
+---
+
+## Task 6.2: Order Placement UI Implementation
+**Duration**: 1 day  
+**Priority**: High
+
+### Description
+Implement user interface components for order placement, integrating with the order execution system from Task 6.1.
+
+### Requirements
+- Order placement form with buy/sell controls
+- Integration with WebSocket notifications for real-time feedback
+- Basic order confirmation and status display
+- Input validation and error handling
+
+### What to Do
+1. Create order placement form component
+2. Add buy/sell order controls with quantity input
+3. Integrate with order API endpoints from Task 6.1
+4. Display order confirmation and execution status
+5. Listen to WebSocket notifications for order updates
+6. Add basic input validation and error display
+7. Show loading states during order processing
+
+### What NOT to Do
+- Don't implement advanced order types UI
+- Don't add complex order management features
+- Don't implement order history display
+- Don't add advanced validation beyond basic checks
+
+### Success Criteria
+- [ ] User can place market buy/sell orders via UI
+- [ ] Order form validates input correctly
+- [ ] Real-time feedback via WebSocket notifications
+- [ ] Order confirmation and status updates display
+- [ ] Error handling works for failed orders
+- [ ] UI integrates smoothly with execution engine
 
 ---
 
@@ -286,7 +326,7 @@ Implement market order execution system that creates positions by executing trad
 Implement portfolio display that shows positions created by order execution and calculates real-time P&L.
 
 ### Requirements
-- Display positions created by market orders from Task 6
+- Display positions created by market orders from Task 6.1
 - Track cash balance (updated by order execution)
 - Calculate unrealized P&L using current simulation price
 - Real-time portfolio updates via WebSocket
@@ -295,7 +335,7 @@ Implement portfolio display that shows positions created by order execution and 
 1. Create portfolio and positions table schema (extend existing database)
 2. Create portfolio data structures to hold cash and positions
 3. Implement P&L calculation using current simulation price
-4. Update portfolio state when orders execute from Task 6
+4. Update portfolio state when orders execute from Task 6.1
 5. Store portfolio state in database
 6. Create portfolio API endpoints (GET /portfolio)
 7. Add portfolio display in frontend (cash, position, P&L)

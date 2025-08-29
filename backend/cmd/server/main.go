@@ -4,6 +4,7 @@ import (
 	"log"
 	_ "tradesimulator/docs" // Import generated docs
 	"tradesimulator/internal/config"
+	"tradesimulator/internal/database"
 	"tradesimulator/internal/handlers"
 	"tradesimulator/internal/services"
 
@@ -29,14 +30,14 @@ func main() {
 	cfg := config.Load()
 
 	// Connect to database
-	// if err := database.Connect(cfg.DatabaseURL); err != nil {
-	// 	log.Fatalf("Failed to connect to database: %v", err)
-	// }
+	if err := database.Connect(cfg.DatabaseURL); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 
 	// Run database migrations
-	// if err := database.AutoMigrate(); err != nil {
-	// 	log.Fatalf("Failed to run database migrations: %v", err)
-	// }
+	if err := database.AutoMigrate(); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
 
 	// Initialize Gin router
 	if cfg.Environment == "production" {
@@ -71,8 +72,16 @@ func main() {
 	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService)
 	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
 
-	// Set simulation handler on WebSocket handler for control message processing
+	// Initialize order and portfolio services
+	orderService := services.NewOrderService(simulationEngine, wsHandler.GetHub())
+	portfolioService := services.NewPortfolioService(simulationEngine)
+
+	// Initialize order handler
+	orderHandler := handlers.NewOrderHandler(orderService, portfolioService)
+
+	// Set handlers on WebSocket handler for message processing
 	wsHandler.SetSimulationHandler(simulationHandler)
+	wsHandler.SetOrderHandler(orderHandler)
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)
@@ -101,6 +110,24 @@ func main() {
 
 		// Simulation endpoints
 		handlers.RegisterSimulationRoutes(api, simulationHandler)
+
+		// Order and portfolio endpoints
+		orders := api.Group("/orders")
+		{
+			orders.POST("/", orderHandler.PlaceOrder)
+			orders.GET("/", orderHandler.GetOrders)
+		}
+
+		trades := api.Group("/trades")
+		{
+			trades.GET("/", orderHandler.GetTrades)
+		}
+
+		portfolio := api.Group("/portfolio")
+		{
+			portfolio.GET("/", orderHandler.GetPortfolio)
+			portfolio.POST("/reset", orderHandler.ResetPortfolio)
+		}
 	}
 
 	// Start server
