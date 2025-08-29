@@ -1,46 +1,60 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
+import { MarketApiService } from '../services/marketApi';
+import { CandleAggregator } from '../utils/CandleAggregator';
 
-interface OHLCV {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+// OHLCV interface moved to CandleAggregator
 
-interface HistoricalDataResponse {
-  symbol: string;
-  data: OHLCV[];
+
+interface SimulationState {
+  state: 'stopped' | 'playing' | 'paused';
+  speed: number;
+  simulationTime: number | null; // Current simulation time in milliseconds
+  startTime: number | null; // Simulation start time in milliseconds
+  progress: number;
+  lastCandle: {
+    startTime: number;
+    endTime: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    isComplete: boolean;
+  } | null;
 }
 
 interface ChartProps {
   symbol: string;
   timeframe: string;
   selectedStartTime?: Date | null;
-  simulationState?: 'stopped' | 'playing' | 'paused';
-  simulationData?: {
-    price: number;
-    timestamp: number;
-    ohlcv: {
-      time: number;
-      open: number;
-      high: number;
-      low: number;
-      close: number;
-      volume: number;
-    };
-    simulationTime: string;
-  } | null;
+  simulationState?: SimulationState;
 }
+
+const color_palette = {
+  green: '#26a69a',
+  red: '#ef5350',
+  light_green: '#b2dfdb',
+  light_red: '#ffcdd2',
+  bright_green: '#30d2c2',
+  bright_red: '#fb312e',
+  crosshair_color: '#007bff',
+}
+
+const price_chart_styles = {
+  borderVisible: false,
+  upColor: color_palette.green,
+  downColor: color_palette.red,
+  wickUpColor: color_palette.green,
+  wickDownColor: color_palette.red,
+};
+
 
 const Chart: React.FC<ChartProps> = ({ 
   symbol, 
   timeframe, 
   selectedStartTime, 
-  simulationState, 
-  simulationData 
+  simulationState
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,7 +69,19 @@ const Chart: React.FC<ChartProps> = ({
   const hasReachedEarliestData = useRef(false);
   const [earliestAvailableTime, setEarliestAvailableTime] = useState<number | null>(null);
   const isComponentMounted = useRef(true);
-  const simulationPriceLine = useRef<any>(null);
+  const candleAggregator = useRef<CandleAggregator>(new CandleAggregator(timeframe));
+  const [crosshairData, setCrosshairData] = useState<{
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    time: number;
+    change: number;
+    changePercent: number;
+    amplitude: number;
+    amplitudePercent: number;
+  } | null>(null);
+  const [isCrosshairActive, setIsCrosshairActive] = useState(false);
 
   const fetchEarliestTime = useCallback(async () => {
     try {
@@ -72,33 +98,37 @@ const Chart: React.FC<ChartProps> = ({
     return null;
   }, [symbol]);
 
-  const fetchData = useCallback(async (endTime?: number, limit: number = 100) => {
-    let url = `http://localhost:8080/api/v1/market/historical?symbol=${symbol}&interval=${timeframe}&limit=${limit}`;
+  const fetchData = useCallback(async (endTime?: number, limit: number = 100, enableIncomplete: boolean = false) => {
+    const response_data = await MarketApiService.getHistoricalData(
+      symbol,
+      timeframe,
+      limit,
+      undefined, // startTime
+      endTime,
+      enableIncomplete
+    );
     
-    if (endTime) {
-      url += `&endTime=${endTime}`;
-    }
-
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error('Failed to fetch chart data');
-    }
-
-    const response_data: HistoricalDataResponse = await response.json();
-    
-    const candlestickData = response_data.data.map(item => ({
-      time: Math.floor(item.time / 1000) as any,
-      open: item.open,
-      high: item.high,
-      low: item.low,
-      close: item.close,
-    }));
+    const candlestickData = response_data.data.map(item => {
+      // Add incomplete candles to aggregator for potential future updates
+      if (!item.isComplete) {
+        candleAggregator.current.addIncompleteCandle(item);
+      }
+      
+      return {
+        time: Math.floor(item.startTime / 1000) as any,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+      };
+    });
 
     const volumeData = response_data.data.map(item => ({
-      time: Math.floor(item.time / 1000) as any,
+      time: Math.floor(item.startTime / 1000) as any,
       value: item.volume,
-      color: item.close >= item.open ? '#26a69a' : '#ef5350',
+      color: item.isComplete ? 
+      (item.close >= item.open ? '#26a69a' : '#ef5350') :
+      (item.close >= item.open ? '#b2dfdb' : '#ffcdd2'), // Lighter green/red for incomplete
     }));
 
     return { candlestickData, volumeData, rawData: response_data.data };
@@ -115,8 +145,16 @@ const Chart: React.FC<ChartProps> = ({
       const earliestTime = await fetchEarliestTime();
       
       const limit = 100;
-      const endTime = selectedStartTime ? selectedStartTime.getTime() : undefined;
-      const { candlestickData, volumeData, rawData } = await fetchData(endTime, limit);
+      // Use current simulation time instead of selected start time when changing timeframes during simulation
+      let endTime: number | undefined;
+      if (simulationState?.simulationTime && simulationState.simulationTime > 0) {
+        endTime = simulationState.simulationTime;
+        console.log('Loading data for timeframe change using current simulation time:', new Date(endTime).toLocaleString());
+      } else {
+        endTime = selectedStartTime ? selectedStartTime.getTime() : undefined;
+      }
+      
+      const { candlestickData, volumeData, rawData } = await fetchData(endTime, limit, true); // Enable incomplete for first load
 
       if (candlestickSeriesRef.current) {
         candlestickSeriesRef.current.setData(candlestickData);
@@ -125,7 +163,7 @@ const Chart: React.FC<ChartProps> = ({
         volumeSeriesRef.current.setData(volumeData);
       }
       if (rawData.length > 0) {
-        displayedRangeStart.current = Math.floor(rawData[0].time / 1000);
+        displayedRangeStart.current = Math.floor(rawData[0].startTime / 1000);
         console.log('Displayed range start:', displayedRangeStart.current);
         
         // Check if we're already at or near the earliest data
@@ -172,7 +210,7 @@ const Chart: React.FC<ChartProps> = ({
       console.log('Loading more data from:', displayedRangeStart.current);
       
       // Don't use selectedStartTime for loading more data, use the actual range start
-      const { candlestickData, volumeData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1, 1000);
+      const { candlestickData, volumeData, rawData } = await fetchData(displayedRangeStart.current * 1000 - 1, 1000, false); // Disable incomplete for load more
 
       // If no new data received, we've reached the earliest available data
       if (rawData.length === 0) {
@@ -196,7 +234,7 @@ const Chart: React.FC<ChartProps> = ({
       volumeSeriesRef.current.setData(newVolumeData);
 
       if (rawData.length > 0) {
-        const newRangeStart = Math.floor(rawData[0].time / 1000);
+        const newRangeStart = Math.floor(rawData[0].startTime / 1000);
         
         // Check if we've reached the earliest available data
         if (earliestAvailableTime && newRangeStart <= earliestAvailableTime + 86400) { // within 1 day
@@ -225,6 +263,9 @@ const Chart: React.FC<ChartProps> = ({
     isInitialLoadComplete.current = false;
     hasReachedEarliestData.current = false;
     isComponentMounted.current = true;
+    
+    // Update aggregator with new timeframe and clear state
+    candleAggregator.current.setDisplayTimeframe(timeframe);
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -237,7 +278,7 @@ const Chart: React.FC<ChartProps> = ({
         },
       },
       width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientWidth * 0.6, // 60% of width for height
+      height: Math.min(chartContainerRef.current.clientWidth * 0.6, 800), // 60% of width for height
       grid: {
         vertLines: {
           color: '#e1e1e1',
@@ -247,8 +288,24 @@ const Chart: React.FC<ChartProps> = ({
         },
       },
       crosshair: {
-        mode: 1,
-      },
+        // Change mode from default 'magnet' to 'normal'.
+        // Allows the crosshair to move freely without snapping to datapoints
+        mode: CrosshairMode.Normal,
+
+        // Vertical crosshair line (showing Date in Label)
+        vertLine: {
+            width: 2,
+            color: color_palette.crosshair_color,
+            style: LineStyle.Solid,
+            labelBackgroundColor: color_palette.crosshair_color,
+        },
+
+        // Horizontal crosshair line (showing Price in Label)
+        horzLine: {
+            color: color_palette.crosshair_color,
+            labelBackgroundColor: color_palette.crosshair_color,
+        },
+    },
       rightPriceScale: {
         borderColor: '#cccccc',
       },
@@ -261,11 +318,7 @@ const Chart: React.FC<ChartProps> = ({
     });
 
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350'
+      ...price_chart_styles
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -305,13 +358,64 @@ const Chart: React.FC<ChartProps> = ({
       console.log('Visible time range changed:', timeRange);
 
       if (fetchTimeout.current) {
-        return;
+        clearTimeout(fetchTimeout.current);
+        fetchTimeout.current = null;
       }
 
       if (timeRange && Number(timeRange.from) < -1) {
         fetchTimeout.current = setTimeout(() => {
           loadMoreData();
-        }, 100);
+        }, 200);
+      }
+    });
+
+    chart.subscribeCrosshairMove(param => {
+      if (param.time !== undefined && param.seriesData) {
+        setIsCrosshairActive(true);
+        const candleData = param.seriesData.get(candlestickSeries);
+        if (candleData && 'open' in candleData && 'high' in candleData && 'low' in candleData && 'close' in candleData) {
+          const change = candleData.close - candleData.open;
+          const changePercent = (change / candleData.open) * 100;
+          const amplitude = candleData.high - candleData.low;
+          const amplitudePercent = (amplitude / candleData.low) * 100;
+          
+          setCrosshairData({
+            open: candleData.open,
+            high: candleData.high,
+            low: candleData.low,
+            close: candleData.close,
+            time: param.time as number,
+            change,
+            changePercent,
+            amplitude,
+            amplitudePercent
+          });
+        }
+      } else {
+        setIsCrosshairActive(false);
+        // Show latest candle data when no crosshair
+        const latestData = candlestickSeries.data();
+        if (latestData.length > 0) {
+          const latest = latestData[latestData.length - 1];
+          if ('open' in latest && 'high' in latest && 'low' in latest && 'close' in latest) {
+            const change = latest.close - latest.open;
+            const changePercent = (change / latest.open) * 100;
+            const amplitude = latest.high - latest.low;
+            const amplitudePercent = (amplitude / latest.low) * 100;
+            
+            setCrosshairData({
+              open: latest.open,
+              high: latest.high,
+              low: latest.low,
+              close: latest.close,
+              time: latest.time as number,
+              change,
+              changePercent,
+              amplitude,
+              amplitudePercent
+            });
+          }
+        }
       }
     });
 
@@ -320,7 +424,7 @@ const Chart: React.FC<ChartProps> = ({
       if (chartContainerRef.current) {
         chart.applyOptions({ 
           width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientWidth * 0.6, // 60% of width for height
+          height: Math.min(chartContainerRef.current.clientWidth * 0.6, 800), // 60% of width for height
         });
       }
     };
@@ -345,72 +449,117 @@ const Chart: React.FC<ChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe, initLoad, loadMoreData]);
+  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData]);
 
-  // Handle simulation real-time updates
+  // Handle simulation real-time updates with frontend aggregation
   useEffect(() => {
-    if (simulationState === 'playing' || simulationState === 'paused') {
-      if (simulationData && chartRef.current && candlestickSeriesRef.current && volumeSeriesRef.current) {
+    if (simulationState?.state === 'playing' || simulationState?.state === 'paused') {
+      if (simulationState.lastCandle && chartRef.current && candlestickSeriesRef.current && volumeSeriesRef.current) {
         try {
-          // Update candle data with real-time OHLCV
-          const candleUpdate = {
-            time: Math.floor(simulationData.ohlcv.time / 1000) as any,
-            open: simulationData.ohlcv.open,
-            high: simulationData.ohlcv.high,
-            low: simulationData.ohlcv.low,
-            close: simulationData.ohlcv.close,
-          };
+          // Process base candle through aggregator
+          const aggregatedCandle = candleAggregator.current.processBaseCandle(simulationState.lastCandle);
+          
+          if (aggregatedCandle) {
+            // Update chart with aggregated display candle
+            const candleUpdate = {
+              time: Math.floor(aggregatedCandle.startTime / 1000) as any,
+              open: aggregatedCandle.open,
+              high: aggregatedCandle.high,
+              low: aggregatedCandle.low,
+              close: aggregatedCandle.close,
+              // Visual indicators for incomplete candles
+              color: aggregatedCandle.isComplete ? undefined : (aggregatedCandle.close >= aggregatedCandle.open ? color_palette.bright_green : color_palette.bright_red),
+              wickColor: aggregatedCandle.isComplete ? undefined : (aggregatedCandle.close >= aggregatedCandle.open ? color_palette.bright_green : color_palette.bright_red),
+            };
 
-          const volumeUpdate = {
-            time: Math.floor(simulationData.ohlcv.time / 1000) as any,
-            value: simulationData.ohlcv.volume,
-            color: simulationData.ohlcv.close >= simulationData.ohlcv.open ? '#26a69a' : '#ef5350',
-          };
+            const volumeUpdate = {
+              time: Math.floor(aggregatedCandle.startTime / 1000) as any,
+              value: aggregatedCandle.volume,
+              color: aggregatedCandle.isComplete ?
+                (aggregatedCandle.close >= aggregatedCandle.open ? color_palette.green : color_palette.red) :
+                (aggregatedCandle.close >= aggregatedCandle.open ? color_palette.light_green : color_palette.light_red),
+            };
 
-          // Update the chart with new candle data
-          candlestickSeriesRef.current.update(candleUpdate);
-          volumeSeriesRef.current.update(volumeUpdate);
+            // Update the chart with aggregated candle data
+            candlestickSeriesRef.current.update(candleUpdate);
+            volumeSeriesRef.current.update(volumeUpdate);
+            
+            // Update crosshair info panel with latest simulation data if no active crosshair
+            if (!isCrosshairActive) {
+              const change = aggregatedCandle.close - aggregatedCandle.open;
+              const changePercent = (change / aggregatedCandle.open) * 100;
+              const amplitude = aggregatedCandle.high - aggregatedCandle.low;
+              const amplitudePercent = (amplitude / aggregatedCandle.low) * 100;
+              
+              setCrosshairData({
+                open: aggregatedCandle.open,
+                high: aggregatedCandle.high,
+                low: aggregatedCandle.low,
+                close: aggregatedCandle.close,
+                time: Math.floor(aggregatedCandle.startTime / 1000),
+                change,
+                changePercent,
+                amplitude,
+                amplitudePercent
+              });
+            }
 
-          // Add or update simulation price line for current price
-          const priceLineOptions = {
-            price: simulationData.price,
-            color: '#ff6b6b',
-            lineWidth: 2,
-            lineStyle: 2, // dashed line
-            axisLabelVisible: true,
-            title: `Sim: $${simulationData.price.toFixed(2)}`,
-          };
-
-          if (simulationPriceLine.current) {
-            // Update existing price line
-            // simulationPriceLine.current.applyOptions(priceLineOptions);
-          } else {
-            // Create new price line
-            simulationPriceLine.current = candlestickSeriesRef.current.createPriceLine(priceLineOptions);
+            // Log the update for debugging
+            console.log(`Frontend aggregated candle update:`, {
+              baseCandle: {
+                time: new Date(simulationState.lastCandle.startTime).toLocaleString(),
+                ohlcv: simulationState.lastCandle
+              },
+              aggregatedCandle: {
+                time: new Date(aggregatedCandle.startTime).toLocaleString(),
+                endTime: new Date(aggregatedCandle.endTime).toLocaleString(),
+                ohlcv: aggregatedCandle,
+                isComplete: aggregatedCandle.isComplete
+              }
+            });
           }
-
-          // Log the update for debugging
-          console.log(`Simulation candle update:`, {
-            time: new Date(simulationData.ohlcv.time).toLocaleString(),
-            ohlcv: simulationData.ohlcv,
-            price: simulationData.price
-          });
         } catch (error) {
           console.warn('Could not update simulation candle:', error);
         }
       }
-    } else if (simulationState === 'stopped') {
-      // Clear simulation markers when stopped
-      if (simulationPriceLine.current && candlestickSeriesRef.current) {
-        try {
-          candlestickSeriesRef.current.removePriceLine(simulationPriceLine.current);
-          simulationPriceLine.current = null;
-        } catch (error) {
-          console.warn('Could not remove simulation price line:', error);
+    }
+  }, [simulationState?.lastCandle]); // Only trigger when lastCandle changes
+
+  // Handle simulation state changes (separate from candle processing)
+  useEffect(() => {
+    if (simulationState?.state === 'stopped') {
+      // Clear aggregator state when simulation stops
+      candleAggregator.current.clear();
+    }
+  }, [simulationState?.state]); // Only trigger when state changes
+
+  // Initialize crosshair display with latest candle data
+  useEffect(() => {
+    if (candlestickSeriesRef.current && !isLoading) {
+      const latestData = candlestickSeriesRef.current.data();
+      if (latestData.length > 0) {
+        const latest = latestData[latestData.length - 1];
+        if ('open' in latest && 'high' in latest && 'low' in latest && 'close' in latest) {
+          const change = latest.close - latest.open;
+          const changePercent = (change / latest.open) * 100;
+          const amplitude = latest.high - latest.low;
+          const amplitudePercent = (amplitude / latest.low) * 100;
+          
+          setCrosshairData({
+            open: latest.open,
+            high: latest.high,
+            low: latest.low,
+            close: latest.close,
+            time: latest.time as number,
+            change,
+            changePercent,
+            amplitude,
+            amplitudePercent
+          });
         }
       }
     }
-  }, [simulationState, simulationData]);
+  }, [isLoading]);
 
   if (error) {
     return (
@@ -446,6 +595,59 @@ const Chart: React.FC<ChartProps> = ({
           zIndex: 10,
         }}>
           <div style={{ fontSize: '16px', color: '#666' }}>Loading chart data...</div>
+        </div>
+      )}
+      {crosshairData && (
+        <div style={{
+          position: 'absolute',
+          top: '10px',
+          left: '10px',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          border: '1px solid #ddd',
+          borderRadius: '4px',
+          padding: '8px 12px',
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          zIndex: 20,
+          minWidth: '160px'
+        }}>
+          <div style={{ marginBottom: '4px', fontWeight: 'bold', color: '#333' }}>
+            {new Date(crosshairData.time * 1000).toLocaleString()}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+            <span style={{ color: '#666' }}>OPEN:</span>
+            <span style={{ fontWeight: 'bold' }}>{crosshairData.open.toFixed(4)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+            <span style={{ color: '#666' }}>HIGH:</span>
+            <span style={{ fontWeight: 'bold', color: color_palette.green }}>{crosshairData.high.toFixed(4)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+            <span style={{ color: '#666' }}>LOW:</span>
+            <span style={{ fontWeight: 'bold', color: color_palette.red }}>{crosshairData.low.toFixed(4)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <span style={{ color: '#666' }}>CLOSE:</span>
+            <span style={{ fontWeight: 'bold' }}>{crosshairData.close.toFixed(4)}</span>
+          </div>
+          <div style={{ borderTop: '1px solid #eee', paddingTop: '4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
+              <span style={{ color: '#666' }}>CHANGE:</span>
+              <span style={{ 
+                fontWeight: 'bold', 
+                color: crosshairData.change >= 0 ? color_palette.green : color_palette.red 
+              }}>
+                {crosshairData.change >= 0 ? '+' : ''}{crosshairData.change.toFixed(4)} ({crosshairData.changePercent >= 0 ? '+' : ''}{crosshairData.changePercent.toFixed(2)}%)
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ color: '#666' }}>AMPLITUDE:</span>
+              <span style={{ fontWeight: 'bold', color: '#333' }}>
+                {crosshairData.amplitude.toFixed(4)} ({crosshairData.amplitudePercent.toFixed(2)}%)
+              </span>
+            </div>
+          </div>
         </div>
       )}
       <div ref={chartContainerRef} style={{ }} />

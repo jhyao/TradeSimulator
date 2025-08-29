@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"sync"
 	"time"
 
@@ -27,23 +26,24 @@ const (
 type SimulationEngine struct {
 	mu             sync.RWMutex
 	state          SimulationState
-	speed          int            // 1, 5, 10, 60, 120, 300, etc.
-	currentIndex   int            // Position in baseDataset
-	ticker         *time.Ticker   // Controls replay speed
-	hub            WebSocketHub   // WebSocket broadcasting
+	speed          int // 1, 5, 10, 60, 120, 300, etc.
+	currentIndex   int // Position in baseDataset
+	tickerInterval time.Duration
+	ticker         *time.Ticker // Controls replay speed
+	hub            WebSocketHub // WebSocket broadcasting
 	symbol         string
 	interval       string
 	stopChan       chan struct{}
-	startTime      time.Time
+	startTime      int64 // Start time in milliseconds
 	ctx            context.Context
 	cancel         context.CancelFunc
 	binanceService *BinanceService
 
-	// Progressive candle support
-	baseInterval       string             // Optimal base interval (1m, 5m, etc.)
-	baseDataset        []models.OHLCV     // Base interval historical data
-	currentProgressive *ProgressiveCandle // Current progressive candle
-	currentSimTime     time.Time          // Current simulation time
+	// Base data streaming support
+	baseInterval      string         // Optimal base interval (1m, 5m, etc.)
+	baseDataset       []models.OHLCV // Base interval historical data
+	currentSimTime    int64          // Current simulation time in milliseconds
+	lastCandleEndTime int64          // Last candle time processed in milliseconds
 
 	// Dynamic change channels
 	speedChangeChan     chan int    // For dynamic speed changes
@@ -54,88 +54,16 @@ type SimulationEngine struct {
 	maxBufferSize     int       // Maximum number of candles to keep in memory
 	isLoadingData     bool      // Flag to prevent concurrent loading
 	dataLoadChan      chan bool // Channel to signal successful data load
-	lastDataLoadTime  time.Time // Last timestamp of loaded data
+	lastDataLoadTime  int64     // Last timestamp of loaded data in milliseconds
 }
 
 type SimulationUpdateData struct {
 	Symbol         string       `json:"symbol"`
-	Price          float64      `json:"price"`
-	Timestamp      int64        `json:"timestamp"`
-	OHLCV          models.OHLCV `json:"ohlcv"`
+	BaseCandle     models.OHLCV `json:"baseCandle"` // Single complete base candle
 	SimulationTime string       `json:"simulationTime"`
 	Progress       float64      `json:"progress"` // 0-100%
 	State          string       `json:"state"`
 	Speed          int          `json:"speed"`
-}
-
-// ProgressiveCandle represents a candle being built progressively from base data
-type ProgressiveCandle struct {
-	StartTime       time.Time      `json:"startTime"`
-	DisplayInterval string         `json:"displayInterval"`
-	BaseCandles     []models.OHLCV `json:"baseCandles"`
-	CurrentOHLCV    models.OHLCV   `json:"currentOHLCV"`
-	IsComplete      bool           `json:"isComplete"`
-	ExpectedCount   int            `json:"expectedCount"`
-}
-
-// AddBaseCandle adds a base candle to the progressive aggregation
-func (pc *ProgressiveCandle) AddBaseCandle(candle models.OHLCV) {
-	pc.BaseCandles = append(pc.BaseCandles, candle)
-	pc.updateAggregation()
-	pc.IsComplete = (len(pc.BaseCandles) >= pc.ExpectedCount)
-}
-
-// updateAggregation recalculates the aggregated OHLCV values
-func (pc *ProgressiveCandle) updateAggregation() {
-	if len(pc.BaseCandles) == 0 {
-		return
-	}
-
-	// Aggregation rules:
-	// open = first open (unchanged)
-	// high = running maximum
-	// low = running minimum
-	// close = latest close (continuously updating)
-	// volume = cumulative sum
-	first := pc.BaseCandles[0]
-	latest := pc.BaseCandles[len(pc.BaseCandles)-1]
-
-	pc.CurrentOHLCV = models.OHLCV{
-		Time:   pc.StartTime.Unix() * 1000,
-		Open:   first.Open,
-		High:   pc.getMaxHigh(),
-		Low:    pc.getMinLow(),
-		Close:  latest.Close,
-		Volume: pc.getSumVolume(),
-	}
-}
-
-func (pc *ProgressiveCandle) getMaxHigh() float64 {
-	max := pc.BaseCandles[0].High
-	for _, candle := range pc.BaseCandles {
-		if candle.High > max {
-			max = candle.High
-		}
-	}
-	return max
-}
-
-func (pc *ProgressiveCandle) getMinLow() float64 {
-	min := pc.BaseCandles[0].Low
-	for _, candle := range pc.BaseCandles {
-		if candle.Low < min {
-			min = candle.Low
-		}
-	}
-	return min
-}
-
-func (pc *ProgressiveCandle) getSumVolume() float64 {
-	sum := 0.0
-	for _, candle := range pc.BaseCandles {
-		sum += candle.Volume
-	}
-	return sum
 }
 
 type SimulationStatus struct {
@@ -170,7 +98,7 @@ func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService) *Simu
 	}
 }
 
-func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, speed int) error {
+func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -209,20 +137,20 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, 
 	se.baseDataset = baseDataset
 	se.startTime = startTime
 	se.currentSimTime = startTime
+	se.lastCandleEndTime = startTime
 	se.currentIndex = 0
-	se.currentProgressive = nil
 	se.state = StatePlaying
 
 	// Initialize continuous data loading state
 	se.isLoadingData = false
 	if len(baseDataset) > 0 {
-		se.lastDataLoadTime = time.Unix(baseDataset[len(baseDataset)-1].Time/1000, 0)
+		se.lastDataLoadTime = baseDataset[len(baseDataset)-1].StartTime
 	} else {
 		se.lastDataLoadTime = startTime
 	}
 
-	log.Printf("Starting simulation: %s %s from %s with %d base candles (%s) at %dx speed",
-		symbol, interval, startTime.Format(time.RFC3339), len(baseDataset), se.baseInterval, speed)
+	log.Printf("Starting simulation: %s %s from %d with %d base candles (%s) at %dx speed",
+		symbol, interval, startTime, len(baseDataset), se.baseInterval, speed)
 
 	// Broadcast simulation start
 	se.broadcastStateChange("simulation_start", "Simulation started")
@@ -233,12 +161,11 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime time.Time, 
 	return nil
 }
 
-func (se *SimulationEngine) loadHistoricalDataset(symbol, interval string, startTime time.Time) ([]models.OHLCV, error) {
-	log.Printf("Loading historical data from %s (limit 1000)", startTime.Format(time.RFC3339))
+func (se *SimulationEngine) loadHistoricalDataset(symbol, interval string, startTime int64) ([]models.OHLCV, error) {
+	// Use binance service to fetch historical data with incomplete candle support
+	startTimeMs := startTime
 
-	// Use binance service to fetch historical data - let API return up to 1000 records
-	startTimeMs := startTime.Unix() * 1000
-	data, err := se.binanceService.GetHistoricalData(symbol, interval, 30, &startTimeMs, nil)
+	data, err := se.binanceService.GetHistoricalData(symbol, interval, 1000, &startTimeMs, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch historical data: %w", err)
 	}
@@ -247,26 +174,37 @@ func (se *SimulationEngine) loadHistoricalDataset(symbol, interval string, start
 		return nil, fmt.Errorf("no historical data returned")
 	}
 
-	log.Printf("Loaded %d candles for simulation", len(data))
+	log.Printf("Loaded %d historical candles for %s %s starting from %d to %d",
+		len(data), symbol, interval, data[0].StartTime, data[len(data)-1].StartTime)
 	return data, nil
 }
 
 func (se *SimulationEngine) runSimulation() {
-	se.ticker = time.NewTicker(se.getTickerInterval())
+	se.tickerInterval = se.getOptimalTickerInterval()
+	se.ticker = time.NewTicker(se.tickerInterval)
 	defer se.ticker.Stop()
 
-	log.Printf("Simulation goroutine started with ticker interval: %v", se.getTickerInterval())
+	log.Printf("Simulation goroutine started with ticker interval: %v", se.getOptimalTickerInterval())
 
+	currentInterval := se.tickerInterval
 	for {
 		select {
 		case <-se.ticker.C:
 			se.mu.Lock()
+			// Check if ticker interval needs to be updated
+			if currentInterval != se.tickerInterval {
+				currentInterval = se.tickerInterval
+				se.ticker.Stop()
+				se.ticker = time.NewTicker(se.tickerInterval)
+				log.Printf("Ticker recreated with new interval: %v", se.tickerInterval)
+			}
+
 			if se.state == StatePlaying {
 				// Check if we need to load more data before processing
 				se.checkDataLoadingNeeded()
 
-				if se.processNextProgressiveUpdate() {
-					se.broadcastProgressiveUpdate()
+				if se.processNextBaseUpdate() {
+					// Base candle processed and broadcasted
 				} else {
 					// Reached end of dataset - but don't stop immediately if we're loading more data
 					if !se.isLoadingData {
@@ -284,12 +222,12 @@ func (se *SimulationEngine) runSimulation() {
 		case newSpeed := <-se.speedChangeChan:
 			se.mu.Lock()
 			log.Printf("Received speed change from %dx to %dx", se.speed, newSpeed)
-			se.speed = newSpeed
-			// Restart ticker with new interval
-			se.ticker.Stop()
-			se.ticker = time.NewTicker(se.getTickerInterval())
-			log.Printf("Ticker restarted with new interval: %v", se.getTickerInterval())
-			se.broadcastStateChange("simulation_speed_change", fmt.Sprintf("Speed changed to %dx", newSpeed))
+			if err := se.handleSpeedChange(newSpeed); err != nil {
+				log.Printf("Failed to change speed: %v", err)
+				se.broadcastStateChange("simulation_error", fmt.Sprintf("Failed to change speed: %v", err))
+			} else {
+				se.broadcastStateChange("simulation_speed_change", fmt.Sprintf("Speed changed to %dx", newSpeed))
+			}
 			se.mu.Unlock()
 
 		case newTimeframe := <-se.timeframeChangeChan:
@@ -324,113 +262,63 @@ func (se *SimulationEngine) runSimulation() {
 	}
 }
 
-// processNextProgressiveUpdate advances simulation time and updates progressive candles
-func (se *SimulationEngine) processNextProgressiveUpdate() bool {
-	// Calculate how much market time to advance per update
-	marketMinutesPerSecond := float64(se.speed) / 60.0
-	updatesPerSecond := int(math.Min(math.Ceil(marketMinutesPerSecond), 10))
-	marketMinutesPerUpdate := marketMinutesPerSecond / float64(updatesPerSecond)
+// processNextBaseUpdate advances simulation time and processes base candles
+func (se *SimulationEngine) processNextBaseUpdate() bool {
+	// Only process updates when actively playing
+	if se.state != StatePlaying {
+		return true // Don't process updates if not playing, but don't end simulation
+	}
 
-	// Advance simulation time
-	se.currentSimTime = se.currentSimTime.Add(time.Duration(marketMinutesPerUpdate * float64(time.Minute)))
+	// Calculate how much market time to advance based on ticker interval and speed
+	tickerIntervalMs := se.tickerInterval.Milliseconds() // Convert to milliseconds
+	marketMsPerRealSecond := int64(se.speed * 1000)      // speed in market seconds, convert to ms
+	marketMsPerUpdate := (marketMsPerRealSecond * tickerIntervalMs) / 1000
 
-	// Find base candles that should be included up to current simulation time
-	newBaseCandlesFound := se.collectBaseCandlesUpTo(se.currentSimTime)
+	// Advance simulation time with millisecond precision (only when playing)
+	se.currentSimTime += marketMsPerUpdate
+
+	// Process all candles that are ready to be broadcast
+	for se.currentIndex < len(se.baseDataset) {
+		baseCandle := se.baseDataset[se.currentIndex]
+
+		// Check if this base candle's end time is now <= current simulation time
+		if baseCandle.EndTime <= se.currentSimTime {
+			// Broadcast this base candle
+			se.broadcastBaseCandle(baseCandle)
+			se.currentIndex++
+			se.lastCandleEndTime = baseCandle.EndTime
+		} else {
+			// No more candles ready, break out of loop
+			break
+		}
+	}
 
 	// If no more base candles available, end simulation
-	if !newBaseCandlesFound && se.currentIndex >= len(se.baseDataset) {
+	if se.currentIndex >= len(se.baseDataset) {
 		return false
 	}
 
 	return true
 }
 
-// collectBaseCandlesUpTo collects base candles up to the given time and adds them to progressive candle
-func (se *SimulationEngine) collectBaseCandlesUpTo(targetTime time.Time) bool {
-	foundNewCandles := false
-
-	// Process base candles up to target time
-	for se.currentIndex < len(se.baseDataset) {
-		baseCandle := se.baseDataset[se.currentIndex]
-		baseCandleTime := time.Unix(baseCandle.Time/1000, 0)
-
-		// Stop if this base candle is beyond our target time
-		if baseCandleTime.After(targetTime) {
-			break
-		}
-
-		// Determine which display candle this base candle belongs to
-		displayCandleStart := se.getDisplayCandleStartTime(baseCandleTime)
-
-		// Check if we need a new progressive candle
-		if se.currentProgressive == nil || se.currentProgressive.StartTime != displayCandleStart {
-			// Start new progressive candle
-			se.currentProgressive = &ProgressiveCandle{
-				StartTime:       displayCandleStart,
-				DisplayInterval: se.interval,
-				BaseCandles:     []models.OHLCV{},
-				IsComplete:      false,
-				ExpectedCount:   se.getExpectedBaseCount(displayCandleStart),
-			}
-		}
-
-		// Add base candle to progressive aggregation
-		se.currentProgressive.AddBaseCandle(baseCandle)
-		se.currentIndex++
-		foundNewCandles = true
-	}
-
-	return foundNewCandles
-}
-
-// getDisplayCandleStartTime calculates the start time of the display candle for a given time
-func (se *SimulationEngine) getDisplayCandleStartTime(t time.Time) time.Time {
-	switch se.interval {
-	case "1m":
-		return t.Truncate(1 * time.Minute)
-	case "5m":
-		return t.Truncate(5 * time.Minute)
-	case "15m":
-		return t.Truncate(15 * time.Minute)
-	case "1h":
-		return t.Truncate(1 * time.Hour)
-	case "4h":
-		return t.Truncate(4 * time.Hour)
-	case "1d":
-		return t.Truncate(24 * time.Hour)
-	default:
-		return t.Truncate(1 * time.Minute)
-	}
-}
-
-// getExpectedBaseCount calculates how many base candles should make up one display candle
-func (se *SimulationEngine) getExpectedBaseCount(displayCandleStart time.Time) int {
-	displayDuration := se.parseTimeframeToDuration(se.interval)
-	baseDuration := se.parseTimeframeToDuration(se.baseInterval)
-	return int(displayDuration / baseDuration)
-}
-
-// broadcastProgressiveUpdate sends the current progressive candle state to clients
-func (se *SimulationEngine) broadcastProgressiveUpdate() {
-	if se.currentProgressive == nil {
-		return
-	}
-
+// broadcastBaseCandle sends a single base candle to clients for frontend aggregation
+func (se *SimulationEngine) broadcastBaseCandle(baseCandle models.OHLCV) {
 	// Progress calculation placeholder - will be time-based in future
 	progress := float64(0)
 
 	updateData := SimulationUpdateData{
 		Symbol:         se.symbol,
-		Price:          se.currentProgressive.CurrentOHLCV.Close,
-		Timestamp:      se.currentProgressive.CurrentOHLCV.Time,
-		OHLCV:          se.currentProgressive.CurrentOHLCV,
-		SimulationTime: se.currentSimTime.Format(time.RFC3339),
+		BaseCandle:     baseCandle,
+		SimulationTime: fmt.Sprintf("%d", se.currentSimTime),
 		Progress:       progress,
 		State:          string(se.state),
 		Speed:          se.speed,
 	}
 
 	se.hub.BroadcastMessageString("simulation_update", updateData)
+	log.Printf("Broadcasted base candle: %d-%d, SimTime: %d, OHLCV: %.2f/%.2f/%.2f/%.2f/%.2f",
+		baseCandle.StartTime, baseCandle.EndTime, se.currentSimTime,
+		baseCandle.Open, baseCandle.High, baseCandle.Low, baseCandle.Close, baseCandle.Volume)
 }
 
 // broadcastCurrentPrice - removed as it was using unused displayDataset
@@ -446,96 +334,67 @@ func (se *SimulationEngine) broadcastStateChange(messageType, message string) {
 	se.hub.BroadcastMessageString(messageType, stateData)
 }
 
-func (se *SimulationEngine) getTickerInterval() time.Duration {
-	// Calculate how many market minutes we advance per real second
-	marketMinutesPerSecond := float64(se.speed) / 60.0
+func (se *SimulationEngine) getOptimalTickerInterval() time.Duration {
+	// Get base interval duration in seconds
+	baseIntervalDurationMs := models.GetIntervalDurationMs(se.baseInterval)
+	baseIntervalSeconds := float64(baseIntervalDurationMs) / 1000.0
 
-	// For progressive candle updates, we want frequent updates
-	// Determine optimal update frequency based on speed
-	if marketMinutesPerSecond <= 1.0 {
-		// Slow speeds: 1 update per second is sufficient
-		return 1 * time.Second
-	} else {
-		// Fast speeds: need multiple updates per second for smooth progression
-		// Calculate updates per second (at least 1, up to 10 for very fast speeds)
-		updatesPerSecond := int(math.Min(math.Ceil(marketMinutesPerSecond), 10))
-		intervalMs := 1000 / updatesPerSecond
-		return time.Duration(intervalMs) * time.Millisecond
-	}
+	// Calculate how many market seconds we advance per real second
+	marketSecondsPerRealSecond := float64(se.speed) // speed is already in seconds
+
+	// Calculate how much of a base candle we consume per real second
+	baseCandlesPerSecond := marketSecondsPerRealSecond / baseIntervalSeconds
+
+	// Calculate ticker interval
+	tickerInterval := time.Duration(float64(time.Second) / baseCandlesPerSecond)
+	return tickerInterval
+
 }
 
 // getOptimalBaseInterval determines the best base interval for fetching data
-// based on display timeframe and speed to ensure smooth progressive updates
 func (se *SimulationEngine) getOptimalBaseInterval() string {
-	displayTimeframeDuration := se.parseTimeframeToDuration(se.interval)
-	marketMinutesPerSecond := float64(se.speed) / 60.0
-	speedAdvance := time.Duration(marketMinutesPerSecond * float64(time.Minute))
 
-	// How many updates do we need per display candle?
-	updatesNeeded := displayTimeframeDuration / speedAdvance
+	// Available timeframes supported by Binance API in ascending order
+	timeframes := []string{"1m", "5m", "15m", "1h", "4h", "1d"}
 
-	// If we need ≤1 update per display candle, use display timeframe itself
-	if updatesNeeded <= 1 {
-		return se.interval
-	}
+	// Find the largest timeframe that's <= speed
+	baseInterval := "1m" // default to most granular
+	for _, tf := range timeframes {
+		intervalDurationMs := models.GetIntervalDurationMs(tf)
+		intervalDurationSeconds := intervalDurationMs / 1000
 
-	// Otherwise, find the smallest interval that gives us enough granularity
-	intervals := []string{"1m", "5m", "15m", "1h", "4h", "1d"}
-	for _, interval := range intervals {
-		intervalDuration := se.parseTimeframeToDuration(interval)
-		maxUpdatesFromBase := displayTimeframeDuration / intervalDuration
-		if maxUpdatesFromBase >= updatesNeeded {
-			return interval
+		if se.speed >= int(intervalDurationSeconds) {
+			baseInterval = tf
+		} else {
+			break // Since timeframes are in ascending order, we can break early
 		}
 	}
-
-	return "1m" // fallback to most granular
-}
-
-// parseTimeframeToDuration converts timeframe string to time.Duration
-func (se *SimulationEngine) parseTimeframeToDuration(timeframe string) time.Duration {
-	switch timeframe {
-	case "1m":
-		return 1 * time.Minute
-	case "5m":
-		return 5 * time.Minute
-	case "15m":
-		return 15 * time.Minute
-	case "1h":
-		return 1 * time.Hour
-	case "4h":
-		return 4 * time.Hour
-	case "1d":
-		return 24 * time.Hour
-	default:
-		return 1 * time.Minute
-	}
+	return baseInterval
 }
 
 // getMinAllowedTimeframe calculates minimum allowed display timeframe based on speed
 func (se *SimulationEngine) getMinAllowedTimeframe(speed int) string {
-	// Y = speed / 60 minutes (how many market minutes per real second)
-	marketMinutesPerSecond := float64(speed) / 60.0
+	// Speed is in seconds: how many market seconds per real second
+	marketSecondsPerRealSecond := float64(speed)
 
-	// Find the largest timeframe that's <= marketMinutesPerSecond
-	// This matches the original requirement specification
-	// Available timeframes in ascending order
+	// Find the largest timeframe that's <= marketSecondsPerRealSecond
+	// Available timeframes in ascending order (in seconds)
 	timeframes := []struct {
 		name    string
-		minutes float64
+		seconds float64
 	}{
-		{"1m", 1},
-		{"5m", 5},
-		{"15m", 15},
-		{"1h", 60},
-		{"4h", 240},
-		{"1d", 1440},
+		{"1m", 60},
+		{"5m", 300},
+		{"15m", 900},
+		{"1h", 3600},
+		{"4h", 14400},
+		{"1d", 86400},
 	}
 
-	// Find the largest timeframe that's <= marketMinutesPerSecond
+	// Find the largest timeframe that's <= marketSecondsPerRealSecond
 	minTimeframe := "1m" // default to smallest if no match
 	for _, tf := range timeframes {
-		if tf.minutes <= marketMinutesPerSecond {
+		if tf.seconds <= marketSecondsPerRealSecond {
 			minTimeframe = tf.name
 		}
 	}
@@ -547,11 +406,11 @@ func (se *SimulationEngine) getMinAllowedTimeframe(speed int) string {
 func (se *SimulationEngine) isTimeframeAllowed(timeframe string, speed int) bool {
 	minAllowed := se.getMinAllowedTimeframe(speed)
 
-	// Get timeframe values in minutes for comparison
-	timeframeMinutes := se.parseTimeframeToDuration(timeframe).Minutes()
-	minAllowedMinutes := se.parseTimeframeToDuration(minAllowed).Minutes()
+	// Get timeframe values in seconds for comparison
+	timeframeSeconds := models.GetIntervalDurationMs(timeframe) / 1000
+	minAllowedSeconds := models.GetIntervalDurationMs(minAllowed) / 1000
 
-	return timeframeMinutes >= minAllowedMinutes
+	return timeframeSeconds >= minAllowedSeconds
 }
 
 func (se *SimulationEngine) Pause() error {
@@ -592,6 +451,15 @@ func (se *SimulationEngine) Stop() error {
 
 	se.state = StateStopped
 	se.currentIndex = 0
+
+	// Reset all time-related state to ensure clean start for next simulation
+	se.currentSimTime = 0
+	se.lastCandleEndTime = 0
+	se.startTime = 0
+	se.lastDataLoadTime = 0
+
+	// Clear data arrays
+	se.baseDataset = nil
 
 	if se.ticker != nil {
 		se.ticker.Stop()
@@ -688,6 +556,84 @@ func (se *SimulationEngine) SetTimeframe(newTimeframe string) error {
 	return nil
 }
 
+// handleSpeedChange processes speed changes during simulation
+func (se *SimulationEngine) handleSpeedChange(newSpeed int) error {
+	log.Printf("Handling speed change from %dx to %dx", se.speed, newSpeed)
+
+	oldSpeed := se.speed
+	se.speed = newSpeed
+
+	// Recalculate optimal base interval for new speed
+	newBaseInterval := se.getOptimalBaseInterval()
+
+	// If base interval needs to change, reload base dataset
+	if newBaseInterval != se.baseInterval {
+		log.Printf("Base interval changing from %s to %s", se.baseInterval, newBaseInterval)
+		oldBaseInterval := se.baseInterval
+		se.baseInterval = newBaseInterval
+
+		// Load data from aligned boundary for new base interval
+		// Find the boundary time that aligns with new base interval before current simulation time
+		newBaseIntervalMs := models.GetIntervalDurationMs(se.baseInterval)
+		alignedStartTime := (se.lastCandleEndTime / newBaseIntervalMs) * newBaseIntervalMs
+
+		// Go back a few intervals to ensure we have enough data
+		loadStartTime := alignedStartTime - (newBaseIntervalMs * 10)
+
+		log.Printf("Loading new base data from aligned time %d (aligned: %d, last candle end time: %d)",
+			loadStartTime, alignedStartTime, se.lastCandleEndTime)
+
+		newBaseDataset, err := se.binanceService.GetHistoricalData(se.symbol, se.baseInterval, 1000, &loadStartTime, nil, false)
+		if err != nil {
+			// Revert changes on error
+			se.speed = oldSpeed
+			se.baseInterval = oldBaseInterval
+			// Ticker interval will be recalculated in main loop
+			return fmt.Errorf("failed to reload base dataset: %w", err)
+		}
+
+		se.baseDataset = newBaseDataset
+
+		// Find current position in new base dataset
+		// Look for the first candle that hasn't been completed yet (endTime > lastCandleEndTime)
+		newIndex := len(newBaseDataset) // Default to end if not found
+		for i, candle := range newBaseDataset {
+			if candle.EndTime > se.lastCandleEndTime {
+				newIndex = i
+				break
+			}
+		}
+		se.currentIndex = newIndex
+
+		log.Printf("Repositioned to index %d in new base dataset (next candle: %d-%d)",
+			se.currentIndex,
+			func() int64 {
+				if se.currentIndex < len(newBaseDataset) {
+					return newBaseDataset[se.currentIndex].StartTime
+				} else {
+					return 0
+				}
+			}(),
+			func() int64 {
+				if se.currentIndex < len(newBaseDataset) {
+					return newBaseDataset[se.currentIndex].EndTime
+				} else {
+					return 0
+				}
+			}())
+	}
+
+	// Update ticker interval
+	se.tickerInterval = se.getOptimalTickerInterval()
+	// Ticker will be recreated in main loop
+	log.Printf("Ticker interval updated to: %v", se.tickerInterval)
+
+	// No progressive candle state to reset
+
+	log.Printf("Speed change completed: %dx -> %dx (base: %s)", oldSpeed, newSpeed, se.baseInterval)
+	return nil
+}
+
 // handleTimeframeChange processes timeframe changes during simulation
 func (se *SimulationEngine) handleTimeframeChange(newTimeframe string) error {
 	log.Printf("Handling timeframe change from %s to %s", se.interval, newTimeframe)
@@ -695,66 +641,10 @@ func (se *SimulationEngine) handleTimeframeChange(newTimeframe string) error {
 	oldInterval := se.interval
 	se.interval = newTimeframe
 
-	// Recalculate optimal base interval for new timeframe
-	newBaseInterval := se.getOptimalBaseInterval()
+	// No progressive candle state to reset
 
-	// If base interval needs to change, reload base dataset
-	if newBaseInterval != se.baseInterval {
-		log.Printf("Base interval changing from %s to %s", se.baseInterval, newBaseInterval)
-		se.baseInterval = newBaseInterval
-
-		// Reload base dataset with new interval
-		newBaseDataset, err := se.loadHistoricalDataset(se.symbol, se.baseInterval, se.startTime)
-		if err != nil {
-			// Revert changes on error
-			se.interval = oldInterval
-			se.baseInterval = se.getOptimalBaseInterval()
-			return fmt.Errorf("failed to reload base dataset: %w", err)
-		}
-
-		se.baseDataset = newBaseDataset
-
-		// Find current position in new base dataset based on simulation time
-		se.currentIndex = se.findIndexByTime(se.currentSimTime)
-		log.Printf("Repositioned to index %d in new base dataset", se.currentIndex)
-	}
-
-	// Reset progressive candle to start fresh with new timeframe
-	se.currentProgressive = nil
-
-	// displayDataset reload removed - no longer needed
-
-	log.Printf("Timeframe change completed: %s -> %s (base: %s)", oldInterval, newTimeframe, se.baseInterval)
+	log.Printf("Timeframe change completed: %s -> %s (base: %s unchanged)", oldInterval, newTimeframe, se.baseInterval)
 	return nil
-}
-
-// findIndexByTime finds the index in base dataset closest to the given time
-func (se *SimulationEngine) findIndexByTime(targetTime time.Time) int {
-	targetMs := targetTime.Unix() * 1000
-
-	// Binary search for the closest time
-	left, right := 0, len(se.baseDataset)-1
-
-	for left <= right {
-		mid := (left + right) / 2
-		midTime := se.baseDataset[mid].Time
-
-		if midTime <= targetMs {
-			left = mid + 1
-		} else {
-			right = mid - 1
-		}
-	}
-
-	// Return the last index where time <= targetTime
-	if right < 0 {
-		return 0
-	}
-	if right >= len(se.baseDataset) {
-		return len(se.baseDataset) - 1
-	}
-
-	return right
 }
 
 func (se *SimulationEngine) GetStatus() SimulationStatus {
@@ -764,10 +654,11 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 	var currentPrice float64
 	var currentTime string
 
-	// Get current price from progressive candle or baseDataset
-	if se.currentProgressive != nil {
-		currentPrice = se.currentProgressive.CurrentOHLCV.Close
-		currentTime = se.currentSimTime.Format(time.RFC3339)
+	// Get current price from most recent processed base candle
+	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
+		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
+		currentPrice = lastProcessedCandle.Close
+		currentTime = fmt.Sprintf("%d", se.currentSimTime)
 	}
 
 	// Progress calculation placeholder - will be time-based in future
@@ -781,7 +672,7 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 		CurrentIndex: se.currentIndex,
 		TotalCandles: len(se.baseDataset),
 		Progress:     progress,
-		StartTime:    se.startTime.Format(time.RFC3339),
+		StartTime:    fmt.Sprintf("%d", se.startTime),
 		CurrentTime:  currentTime,
 		CurrentPrice: currentPrice,
 	}
@@ -791,8 +682,9 @@ func (se *SimulationEngine) GetCurrentPrice() float64 {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
-	if se.currentProgressive != nil {
-		return se.currentProgressive.CurrentOHLCV.Close
+	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
+		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
+		return lastProcessedCandle.Close
 	}
 	return 0
 }
@@ -834,22 +726,18 @@ func (se *SimulationEngine) loadMoreHistoricalData() error {
 	var startTimeMs int64
 	if len(se.baseDataset) > 0 {
 		lastCandle := se.baseDataset[len(se.baseDataset)-1]
-		startTimeMs = lastCandle.Time + 1
+		startTimeMs = lastCandle.StartTime + 1
 	} else {
 		// Fallback to last known time
-		startTimeMs = se.lastDataLoadTime.Unix() * 1000
+		startTimeMs = se.lastDataLoadTime
 	}
-
-	startTime := time.Unix(startTimeMs/1000, 0)
-	log.Printf("Loading more historical data from %s (limit 1000) (%s, %s)",
-		startTime.Format(time.RFC3339), se.symbol, se.baseInterval)
 
 	// Fetch new data chunk with retry logic
 	var newData []models.OHLCV
 	var err error
 	maxRetries := 3
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		newData, err = se.binanceService.GetHistoricalData(se.symbol, se.baseInterval, 30, &startTimeMs, nil)
+		newData, err = se.binanceService.GetHistoricalData(se.symbol, se.baseInterval, 1000, &startTimeMs, nil, false)
 		if err == nil {
 			break
 		}
@@ -872,9 +760,10 @@ func (se *SimulationEngine) loadMoreHistoricalData() error {
 
 	// Append new data to existing dataset
 	se.baseDataset = append(se.baseDataset, newData...)
-	se.lastDataLoadTime = time.Unix(newData[len(newData)-1].Time/1000, 0)
+	se.lastDataLoadTime = newData[len(newData)-1].StartTime
 
-	log.Printf("Loaded %d additional candles, total base dataset size: %d", len(newData), len(se.baseDataset))
+	log.Printf("Loaded %d historical candles for %s %s starting from %d to %d",
+		len(newData), se.baseInterval, se.baseInterval, newData[0].EndTime, newData[len(newData)-1].StartTime)
 
 	// displayDataset loading removed - no longer needed
 

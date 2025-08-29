@@ -30,6 +30,7 @@ func NewMarketHandler() *MarketHandler {
 // @Param limit query int false "Number of klines to return (1-1000)" default(1000) minimum(1) maximum(1000)
 // @Param startTime query int false "Start time in milliseconds"
 // @Param endTime query int false "End time in milliseconds"
+// @Param enableIncomplete query boolean false "Enable incomplete candle support" default(false)
 // @Success 200 {object} models.HistoricalDataResponse "Historical market data"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
@@ -77,8 +78,16 @@ func (h *MarketHandler) GetHistoricalData(c *gin.Context) {
 		}
 	}
 
+	// Parse optional enableIncomplete parameter (default: false)
+	enableIncomplete := false
+	if enableIncompleteStr := c.Query("enableIncomplete"); enableIncompleteStr != "" {
+		if parsed, err := strconv.ParseBool(enableIncompleteStr); err == nil {
+			enableIncomplete = parsed
+		}
+	}
+
 	// Fetch historical data
-	data, err := h.binanceService.GetHistoricalData(symbol, interval, limit, startTime, endTime)
+	data, err := h.binanceService.GetHistoricalData(symbol, interval, limit, startTime, endTime, enableIncomplete)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

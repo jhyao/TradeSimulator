@@ -15,7 +15,7 @@ import (
 type BinanceService struct {
 	client       *binance.Client
 	rateLimiter  chan struct{}
-	lastRequest  time.Time
+	lastRequest  int64 // Last request time in milliseconds
 	requestMutex sync.Mutex
 }
 
@@ -32,7 +32,7 @@ func NewBinanceService() *BinanceService {
 	return &BinanceService{
 		client:      client,
 		rateLimiter: rateLimiter,
-		lastRequest: time.Now(),
+		lastRequest: time.Now().UnixMilli(),
 	}
 }
 
@@ -92,8 +92,8 @@ func (b *BinanceService) GetKlines(symbol, interval string, limit int, startTime
 	return result, nil
 }
 
-// GetHistoricalData fetches historical data and converts to OHLCV format
-func (b *BinanceService) GetHistoricalData(symbol, interval string, limit int, startTime, endTime *int64) ([]models.OHLCV, error) {
+// GetHistoricalData fetches historical data with optional incomplete candle support
+func (b *BinanceService) GetHistoricalData(symbol, interval string, limit int, startTime, endTime *int64, enableIncomplete bool) ([]models.OHLCV, error) {
 	klines, err := b.GetKlines(symbol, interval, limit, startTime, endTime)
 	if err != nil {
 		return nil, err
@@ -111,7 +111,117 @@ func (b *BinanceService) GetHistoricalData(symbol, interval string, limit int, s
 		ohlcvData = append(ohlcvData, *ohlcv)
 	}
 
+	// Check if we need to create an incomplete last candle (only if enableIncomplete is true)
+	if enableIncomplete && endTime != nil && len(ohlcvData) > 0 {
+		lastCandle := ohlcvData[len(ohlcvData)-1]
+
+		// If endTime falls within the last candle's time range, create incomplete candle
+		if *endTime > lastCandle.StartTime && *endTime < lastCandle.EndTime {
+			fmt.Printf("Detected incomplete candle scenario: endTime=%d falls within candle range [%d, %d]\n",
+				*endTime, lastCandle.StartTime, lastCandle.EndTime)
+
+			// Calculate the proper candle start time
+			candleStartTime := models.CalculateCandleStartTime(*endTime, interval)
+
+			// Get 1m data to build the incomplete candle
+			incompleteCandle, err := b.buildIncompleteCandleFromMinuteData(symbol, candleStartTime, *endTime, interval)
+			if err != nil {
+				fmt.Printf("Warning: failed to build incomplete candle, using original: %v\n", err)
+			} else {
+				// Replace the last complete candle with the incomplete one
+				ohlcvData[len(ohlcvData)-1] = incompleteCandle
+				fmt.Printf("Replaced complete candle with incomplete candle: time=%d, endTime=%d, isComplete=%t\n",
+					incompleteCandle.StartTime, incompleteCandle.EndTime, incompleteCandle.IsComplete)
+			}
+		}
+	}
+
 	return ohlcvData, nil
+}
+
+// buildIncompleteCandleFromMinuteData builds an incomplete candle using 1m data
+// Handles large intervals by making multiple API calls if needed
+func (b *BinanceService) buildIncompleteCandleFromMinuteData(symbol string, candleStartTime, targetEndTime int64, targetInterval string) (models.OHLCV, error) {
+	requiredMinutes := (targetEndTime - candleStartTime) / (60 * 1000)
+	fmt.Printf("Building incomplete candle: need %d minutes of 1m data from %d to %d\n",
+		requiredMinutes, candleStartTime, targetEndTime)
+
+	var allMinuteData []models.OHLCV
+	currentStartTime := candleStartTime
+	apiCallCount := 0
+
+	// Make multiple API calls if needed
+	for currentStartTime < targetEndTime {
+		apiCallCount++
+
+		fmt.Printf("Fetching 1m data batch #%d: starting from %d\n", apiCallCount, currentStartTime)
+
+		// Fetch this batch of 1m data using limit=1000, no endTime
+		klines, err := b.GetKlines(symbol, "1m", 1000, &currentStartTime, nil)
+		if err != nil {
+			return models.OHLCV{}, fmt.Errorf("failed to fetch 1m klines batch for incomplete candle: %w", err)
+		}
+
+		if len(klines) == 0 {
+			fmt.Printf("No more 1m data available, stopping\n")
+			break
+		}
+
+		// Convert klines to OHLCV and add to collection
+		var lastCandleEndTime int64
+		reachedTarget := false
+
+		for _, kline := range klines {
+			ohlcv, err := kline.ToOHLCV()
+			if err != nil {
+				continue
+			}
+
+			// Only include data within our target range
+			if ohlcv.StartTime >= candleStartTime && ohlcv.StartTime < targetEndTime {
+				allMinuteData = append(allMinuteData, *ohlcv)
+			}
+
+			lastCandleEndTime = ohlcv.EndTime
+
+			// If we've reached our target time, mark as reached and stop processing
+			if ohlcv.StartTime >= targetEndTime {
+				reachedTarget = true
+				break
+			}
+		}
+
+		// If we've reached target time, exit the outer loop
+		if reachedTarget {
+			fmt.Printf("Reached target time %d, stopping data collection\n", targetEndTime)
+			break
+		}
+
+		// Update currentStartTime for next batch: last candle's endTime + 1
+		currentStartTime = lastCandleEndTime + 1
+
+		// If we got less than 1000 candles, we've reached the end of available data
+		if len(klines) < 1000 {
+			fmt.Printf("Received %d candles (< 1000), reached end of available data\n", len(klines))
+			break
+		}
+
+		// Add small delay between API calls to respect rate limits
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if len(allMinuteData) == 0 {
+		return models.OHLCV{}, fmt.Errorf("no 1m data available for incomplete candle")
+	}
+
+	// Create incomplete candle from all collected minute data
+	incompleteCandle := models.CreateIncompleteCandle(candleStartTime, targetEndTime, targetInterval, allMinuteData)
+
+	fmt.Printf("Built incomplete candle from %d minute candles (across %d API calls): OHLCV=%.2f/%.2f/%.2f/%.2f/%.2f\n",
+		len(allMinuteData), apiCallCount,
+		incompleteCandle.Open, incompleteCandle.High, incompleteCandle.Low, incompleteCandle.Close, incompleteCandle.Volume)
+
+	return incompleteCandle, nil
 }
 
 // isSupportedSymbol checks if the symbol is in our supported list
@@ -193,13 +303,15 @@ func (b *BinanceService) waitForRateLimit() error {
 	defer b.requestMutex.Unlock()
 
 	// Wait for at least 100ms between requests
-	minInterval := 100 * time.Millisecond
-	elapsed := time.Since(b.lastRequest)
+	minIntervalMs := int64(100)
+	currentTime := time.Now().UnixMilli()
+	elapsed := currentTime - b.lastRequest
 
-	if elapsed < minInterval {
-		time.Sleep(minInterval - elapsed)
+	if elapsed < minIntervalMs {
+		sleepDuration := time.Duration(minIntervalMs-elapsed) * time.Millisecond
+		time.Sleep(sleepDuration)
 	}
 
-	b.lastRequest = time.Now()
+	b.lastRequest = time.Now().UnixMilli()
 	return nil
 }

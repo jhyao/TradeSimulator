@@ -53,17 +53,15 @@ func (sh *SimulationHandler) StartSimulation(c *gin.Context) {
 		return
 	}
 
-	// Convert timestamp to time
-	startTime := time.Unix(req.StartTime/1000, 0)
-
 	// Validate start time is not in the future
-	if startTime.After(time.Now()) {
+	currentTimeMs := time.Now().UnixMilli()
+	if req.StartTime > currentTimeMs {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Start time cannot be in the future"})
 		return
 	}
 
 	// Start the simulation
-	if err := sh.engine.Start(req.Symbol, req.Interval, startTime, req.Speed); err != nil {
+	if err := sh.engine.Start(req.Symbol, req.Interval, req.StartTime, req.Speed); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -71,7 +69,7 @@ func (sh *SimulationHandler) StartSimulation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Simulation started",
 		"symbol":    req.Symbol,
-		"startTime": startTime.Format(time.RFC3339),
+		"startTime": req.StartTime,
 		"interval":  req.Interval,
 		"speed":     req.Speed,
 	})
@@ -166,16 +164,20 @@ func (sh *SimulationHandler) GetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// RegisterSimulationRoutes registers all simulation routes
+// RegisterSimulationRoutes registers remaining simulation routes
+// Most simulation control is now handled via WebSocket messages
 func RegisterSimulationRoutes(router *gin.RouterGroup, handler *SimulationHandler) {
 	simulation := router.Group("/simulation")
 	{
-		simulation.POST("/start", handler.StartSimulation)
-		simulation.POST("/pause", handler.PauseSimulation)
-		simulation.POST("/resume", handler.ResumeSimulation)
-		simulation.POST("/stop", handler.StopSimulation)
-		simulation.POST("/speed", handler.SetSpeed)
-		simulation.POST("/timeframe", handler.SetTimeframe)
+		// Keep status endpoint for debugging and health checks
 		simulation.GET("/status", handler.GetStatus)
+		
+		// Removed obsolete control endpoints - now handled via WebSocket:
+		// - POST /start
+		// - POST /pause 
+		// - POST /resume
+		// - POST /stop
+		// - POST /speed
+		// - POST /timeframe
 	}
 }

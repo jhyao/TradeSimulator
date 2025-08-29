@@ -19,15 +19,15 @@ export interface ConnectionStatusData {
 
 export interface SimulationUpdateData {
   symbol: string;
-  price: number;
-  timestamp: number;
-  ohlcv: {
-    time: number;
+  baseCandle: {
+    startTime: number;
+    endTime: number;
     open: number;
     high: number;
     low: number;
     close: number;
     volume: number;
+    isComplete: boolean;
   };
   simulationTime: string;
   progress: number;

@@ -1,0 +1,19 @@
+{
+  "name": "trade-simulator-tests",
+  "version": "1.0.0",
+  "description": "Test scripts for TradeSimulator data replay functionality",
+  "main": "test_data_replay.js",
+  "scripts": {
+    "test": "node test_data_replay.js",
+    "test:simple": "node test_simple.js",
+    "test:quick": "node test_simple.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {},
+  "keywords": ["trading", "simulation", "test"],
+  "author": "",
+  "license": "MIT"
+}

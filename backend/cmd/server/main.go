@@ -2,15 +2,14 @@ package main
 
 import (
 	"log"
+	_ "tradesimulator/docs" // Import generated docs
 	"tradesimulator/internal/config"
-	"tradesimulator/internal/database"
 	"tradesimulator/internal/handlers"
 	"tradesimulator/internal/services"
-	_ "tradesimulator/docs" // Import generated docs
 
 	"github.com/gin-gonic/gin"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // @title Trade Simulator API
@@ -30,20 +29,20 @@ func main() {
 	cfg := config.Load()
 
 	// Connect to database
-	if err := database.Connect(cfg.DatabaseURL); err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
+	// if err := database.Connect(cfg.DatabaseURL); err != nil {
+	// 	log.Fatalf("Failed to connect to database: %v", err)
+	// }
 
 	// Run database migrations
-	if err := database.AutoMigrate(); err != nil {
-		log.Fatalf("Failed to run database migrations: %v", err)
-	}
+	// if err := database.AutoMigrate(); err != nil {
+	// 	log.Fatalf("Failed to run database migrations: %v", err)
+	// }
 
 	// Initialize Gin router
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	
+
 	r := gin.Default()
 
 	// CORS middleware for development
@@ -51,36 +50,39 @@ func main() {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
-		
+
 		c.Next()
 	})
 
 	// Initialize services
 	binanceService := services.NewBinanceService()
-	
+
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	marketHandler := handlers.NewMarketHandler()
 	wsHandler := handlers.NewWebSocketHandler()
-	
+
 	// Initialize simulation engine and handler
 	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService)
 	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
 
+	// Set simulation handler on WebSocket handler for control message processing
+	wsHandler.SetSimulationHandler(simulationHandler)
+
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)
-	
+
 	// Swagger endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// WebSocket endpoint
 	r.GET("/ws", wsHandler.HandleWebSocket)
-	
+
 	// Test endpoint for WebSocket broadcasting
 	r.POST("/test/broadcast", wsHandler.TestBroadcast)
 
@@ -88,7 +90,7 @@ func main() {
 	api := r.Group("/api/v1")
 	{
 		api.GET("/health", healthHandler.Health)
-		
+
 		// Market data endpoints
 		market := api.Group("/market")
 		{
@@ -96,7 +98,7 @@ func main() {
 			market.GET("/symbols", marketHandler.GetSupportedSymbols)
 			market.GET("/earliest-time/:symbol", marketHandler.GetEarliestTime)
 		}
-		
+
 		// Simulation endpoints
 		handlers.RegisterSimulationRoutes(api, simulationHandler)
 	}

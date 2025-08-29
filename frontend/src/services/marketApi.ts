@@ -7,12 +7,14 @@ interface EarliestTimeResponse {
 interface HistoricalDataResponse {
   symbol: string;
   data: Array<{
-    time: number;
+    startTime: number;
+    endTime: number;
     open: number;
     high: number;
     low: number;
     close: number;
     volume: number;
+    isComplete: boolean;
   }>;
 }
 
@@ -43,7 +45,8 @@ export class MarketApiService {
     interval: string = '1h',
     limit: number = 1000,
     startTime?: number,
-    endTime?: number
+    endTime?: number,
+    enableIncomplete: boolean = false
   ): Promise<HistoricalDataResponse> {
     const params = new URLSearchParams({
       symbol,
@@ -56,6 +59,9 @@ export class MarketApiService {
     }
     if (endTime) {
       params.append('endTime', endTime.toString());
+    }
+    if (enableIncomplete) {
+      params.append('enableIncomplete', 'true');
     }
 
     const response = await fetch(`${API_BASE_URL}/market/historical?${params}`);

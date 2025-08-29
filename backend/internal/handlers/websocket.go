@@ -27,6 +27,14 @@ const (
 	PriceUpdate      MessageType = "price_update"
 	ConnectionStatus MessageType = "connection_status"
 	Error           MessageType = "error"
+	// Simulation control messages
+	SimulationStart     MessageType = "simulation_control_start"
+	SimulationStop      MessageType = "simulation_control_stop"
+	SimulationPause     MessageType = "simulation_control_pause"
+	SimulationResume    MessageType = "simulation_control_resume"
+	SimulationSetSpeed  MessageType = "simulation_control_set_speed"
+	SimulationSetTimeframe MessageType = "simulation_control_set_timeframe"
+	SimulationGetStatus MessageType = "simulation_control_get_status"
 )
 
 // WebSocketMessage represents a WebSocket message
@@ -49,12 +57,36 @@ type ConnectionStatusData struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// Simulation control message structures
+type SimulationStartData struct {
+	Symbol    string `json:"symbol"`
+	StartTime int64  `json:"startTime"`
+	Interval  string `json:"interval"`
+	Speed     int    `json:"speed"`
+}
+
+type SimulationSetSpeedData struct {
+	Speed int `json:"speed"`
+}
+
+type SimulationSetTimeframeData struct {
+	Timeframe string `json:"timeframe"`
+}
+
+type SimulationControlResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
 // Client represents a WebSocket client
 type Client struct {
 	Conn   *websocket.Conn
 	Send   chan []byte
 	Hub    *Hub
 	ID     string
+	SimulationHandler *SimulationHandler // Reference to handle simulation control messages
 }
 
 // Hub maintains active clients and broadcasts messages
@@ -161,6 +193,7 @@ func (h *Hub) GetClientCount() int {
 // WebSocketHandler handles WebSocket connections
 type WebSocketHandler struct {
 	hub *Hub
+	simulationHandler *SimulationHandler
 }
 
 // NewWebSocketHandler creates a new WebSocket handler
@@ -171,6 +204,11 @@ func NewWebSocketHandler() *WebSocketHandler {
 	return &WebSocketHandler{
 		hub: hub,
 	}
+}
+
+// SetSimulationHandler sets the simulation handler reference for message processing
+func (wh *WebSocketHandler) SetSimulationHandler(sh *SimulationHandler) {
+	wh.simulationHandler = sh
 }
 
 // HandleWebSocket upgrades HTTP connection to WebSocket and manages client
@@ -190,6 +228,7 @@ func (wh *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		Send: make(chan []byte, 256),
 		Hub:  wh.hub,
 		ID:   clientID,
+		SimulationHandler: wh.simulationHandler,
 	}
 	
 	// Register client
@@ -244,8 +283,9 @@ func (c *Client) readPump() {
 			break
 		}
 		
-		// Handle incoming messages (ping, etc.)
+		// Handle incoming messages
 		log.Printf("Received message from client %s: %s", c.ID, string(message))
+		c.handleControlMessage(message)
 	}
 }
 
@@ -260,4 +300,161 @@ func (c *Client) writePump() {
 		}
 	}
 	c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+}
+
+// handleControlMessage processes incoming simulation control messages
+func (c *Client) handleControlMessage(messageBytes []byte) {
+	var message WebSocketMessage
+	if err := json.Unmarshal(messageBytes, &message); err != nil {
+		log.Printf("Error parsing control message from client %s: %v", c.ID, err)
+		c.sendResponse(false, "Invalid message format", nil, err.Error())
+		return
+	}
+
+	if c.SimulationHandler == nil {
+		log.Printf("No simulation handler available for client %s", c.ID)
+		c.sendResponse(false, "Simulation handler not available", nil, "Internal error")
+		return
+	}
+
+	switch MessageType(message.Type) {
+	case SimulationStart:
+		c.handleStartSimulation(message.Data)
+	case SimulationStop:
+		c.handleStopSimulation()
+	case SimulationPause:
+		c.handlePauseSimulation()
+	case SimulationResume:
+		c.handleResumeSimulation()
+	case SimulationSetSpeed:
+		c.handleSetSpeed(message.Data)
+	case SimulationSetTimeframe:
+		c.handleSetTimeframe(message.Data)
+	case SimulationGetStatus:
+		c.handleGetStatus()
+	default:
+		log.Printf("Unknown control message type from client %s: %s", c.ID, message.Type)
+	}
+}
+
+// sendResponse sends a control response back to the client
+func (c *Client) sendResponse(success bool, message string, data interface{}, errorMsg string) {
+	response := SimulationControlResponse{
+		Success: success,
+		Message: message,
+		Data:    data,
+		Error:   errorMsg,
+	}
+
+	responseMsgType := "simulation_control_response"
+	if !success {
+		responseMsgType = "simulation_control_error"
+	}
+
+	responseMessage := WebSocketMessage{
+		Type: MessageType(responseMsgType),
+		Data: response,
+	}
+
+	responseData, err := json.Marshal(responseMessage)
+	if err != nil {
+		log.Printf("Error marshaling control response for client %s: %v", c.ID, err)
+		return
+	}
+
+	select {
+	case c.Send <- responseData:
+	default:
+		log.Printf("Client %s send channel full, dropping response", c.ID)
+	}
+}
+
+// Simulation control handlers
+func (c *Client) handleStartSimulation(data interface{}) {
+	dataBytes, _ := json.Marshal(data)
+	var startData SimulationStartData
+	if err := json.Unmarshal(dataBytes, &startData); err != nil {
+		c.sendResponse(false, "Invalid start simulation data", nil, err.Error())
+		return
+	}
+
+	if err := c.SimulationHandler.engine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed); err != nil {
+		c.sendResponse(false, "Failed to start simulation", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Simulation started", map[string]interface{}{
+		"symbol":    startData.Symbol,
+		"startTime": startData.StartTime,
+		"interval":  startData.Interval,
+		"speed":     startData.Speed,
+	}, "")
+}
+
+func (c *Client) handleStopSimulation() {
+	if err := c.SimulationHandler.engine.Stop(); err != nil {
+		c.sendResponse(false, "Failed to stop simulation", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Simulation stopped", nil, "")
+}
+
+func (c *Client) handlePauseSimulation() {
+	if err := c.SimulationHandler.engine.Pause(); err != nil {
+		c.sendResponse(false, "Failed to pause simulation", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Simulation paused", nil, "")
+}
+
+func (c *Client) handleResumeSimulation() {
+	if err := c.SimulationHandler.engine.Resume(); err != nil {
+		c.sendResponse(false, "Failed to resume simulation", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Simulation resumed", nil, "")
+}
+
+func (c *Client) handleSetSpeed(data interface{}) {
+	dataBytes, _ := json.Marshal(data)
+	var speedData SimulationSetSpeedData
+	if err := json.Unmarshal(dataBytes, &speedData); err != nil {
+		c.sendResponse(false, "Invalid speed data", nil, err.Error())
+		return
+	}
+
+	if err := c.SimulationHandler.engine.SetSpeed(speedData.Speed); err != nil {
+		c.sendResponse(false, "Failed to set speed", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Speed updated", map[string]interface{}{
+		"speed": speedData.Speed,
+	}, "")
+}
+
+func (c *Client) handleSetTimeframe(data interface{}) {
+	dataBytes, _ := json.Marshal(data)
+	var timeframeData SimulationSetTimeframeData
+	if err := json.Unmarshal(dataBytes, &timeframeData); err != nil {
+		c.sendResponse(false, "Invalid timeframe data", nil, err.Error())
+		return
+	}
+
+	if err := c.SimulationHandler.engine.SetTimeframe(timeframeData.Timeframe); err != nil {
+		c.sendResponse(false, "Failed to set timeframe", nil, err.Error())
+		return
+	}
+
+	c.sendResponse(true, "Timeframe updated", map[string]interface{}{
+		"timeframe": timeframeData.Timeframe,
+	}, "")
+}
+
+func (c *Client) handleGetStatus() {
+	status := c.SimulationHandler.engine.GetStatus()
+	c.sendResponse(true, "Status retrieved", status, "")
 }
