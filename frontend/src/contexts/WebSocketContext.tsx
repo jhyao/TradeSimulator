@@ -1,11 +1,20 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useWebSocket, WebSocketMessage, PriceUpdateData, SimulationUpdateData, ConnectionState } from '../hooks/useWebSocket';
 
+interface OrderNotification {
+  type: 'order_placed' | 'order_executed' | 'order_failed';
+  order: any;
+  trade?: any;
+  message: string;
+  timestamp: number;
+}
+
 interface WebSocketContextType {
   connectionState: ConnectionState;
   lastMessage: WebSocketMessage | null;
   lastPriceUpdate: PriceUpdateData | null;
   lastSimulationUpdate: SimulationUpdateData | null;
+  lastOrderNotification: OrderNotification | null;
   sendMessage: (message: any) => void;
   connect: () => void;
   disconnect: () => void;
@@ -17,6 +26,8 @@ interface WebSocketContextType {
   setSpeed: (speed: number) => Promise<void>;
   setTimeframe: (timeframe: string) => Promise<void>;
   getStatus: () => Promise<any>;
+  // Order methods
+  placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number) => Promise<void>;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -28,6 +39,7 @@ interface WebSocketProviderProps {
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }) => {
   const [lastPriceUpdate, setLastPriceUpdate] = useState<PriceUpdateData | null>(null);
   const [lastSimulationUpdate, setLastSimulationUpdate] = useState<SimulationUpdateData | null>(null);
+  const [lastOrderNotification, setLastOrderNotification] = useState<OrderNotification | null>(null);
   
   // Removed unused request tracking variables for now
   
@@ -56,6 +68,35 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         case 'simulation_control_error':
           handleControlResponse(lastMessage);
           break;
+        case 'order_placed':
+          setLastOrderNotification({
+            type: 'order_placed',
+            order: lastMessage.data.order,
+            trade: lastMessage.data.trade,
+            message: 'Order placed successfully',
+            timestamp: Date.now()
+          });
+          break;
+        case 'order_executed':
+          setLastOrderNotification({
+            type: 'order_executed',
+            order: lastMessage.data.order,
+            trade: lastMessage.data.trade,
+            message: 'Order executed',
+            timestamp: Date.now()
+          });
+          break;
+        case 'order_control_response':
+          handleOrderControlResponse(lastMessage);
+          break;
+        case 'order_control_error':
+          setLastOrderNotification({
+            type: 'order_failed',
+            order: null,
+            message: lastMessage.data.error || 'Order failed',
+            timestamp: Date.now()
+          });
+          break;
         case 'connection_status':
           console.log('Connection status:', lastMessage.data);
           break;
@@ -82,6 +123,30 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.error('Control operation failed:', response.error || response.message);
       // For now, we'll handle responses without request tracking
       // since the backend doesn't currently include requestId in responses
+    }
+  };
+
+  // Handle order control responses
+  const handleOrderControlResponse = (message: WebSocketMessage) => {
+    const response = message.data;
+    
+    if (response.success) {
+      console.log('Order operation successful:', response.message);
+      setLastOrderNotification({
+        type: 'order_placed',
+        order: response.data?.order,
+        trade: response.data?.trade,
+        message: response.message || 'Order placed successfully',
+        timestamp: Date.now()
+      });
+    } else {
+      console.error('Order operation failed:', response.error || response.message);
+      setLastOrderNotification({
+        type: 'order_failed',
+        order: null,
+        message: response.error || response.message || 'Order failed',
+        timestamp: Date.now()
+      });
     }
   };
 
@@ -181,11 +246,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     });
   }, [connectionState, sendMessage]);
 
+  // Order methods
+  const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number) => {
+    return sendControlMessage('order_place', {
+      symbol,
+      side,
+      quantity
+    });
+  }, [sendControlMessage]);
+
   const value: WebSocketContextType = {
     connectionState,
     lastMessage,
     lastPriceUpdate,
     lastSimulationUpdate,
+    lastOrderNotification,
     sendMessage,
     connect,
     disconnect,
@@ -195,7 +270,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     resumeSimulation,
     setSpeed,
     setTimeframe,
-    getStatus
+    getStatus,
+    placeOrder
   };
 
   return (

@@ -4,6 +4,8 @@ import StartTimeSelector from './components/StartTimeSelector';
 import SimulationControls from './components/SimulationControls';
 import SymbolSelector from './components/SymbolSelector';
 import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/TimeframeSelector';
+import OrderPanel from './components/OrderPanel';
+import Portfolio from './components/Portfolio';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { ConnectionState } from './hooks/useWebSocket';
 // Removed SimulationApiService import - now using WebSocket
@@ -336,38 +338,70 @@ function AppContent() {
           </div>
         </div>
         
+        {/* Main Content Area - Chart and Trading */}
         <div style={{
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-          overflow: 'hidden'
+          display: 'flex',
+          gap: '20px',
+          marginBottom: '20px'
         }}>
-          {/* Timeframe Selector at top of chart */}
+          {/* Chart Section */}
           <div style={{
-            padding: '10px 15px',
-            backgroundColor: '#f8f9fa',
-            borderBottom: '1px solid #dee2e6',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
+            flex: '2',
+            backgroundColor: 'white',
+            borderRadius: '8px',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+            overflow: 'hidden'
           }}>
-            <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
-              Price Chart - {symbol}
-            </h3>
-            <TimeframeSelector
+            {/* Timeframe Selector at top of chart */}
+            <div style={{
+              padding: '10px 15px',
+              backgroundColor: '#f8f9fa',
+              borderBottom: '1px solid #dee2e6',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+                Price Chart - {symbol}
+              </h3>
+              <TimeframeSelector
+                timeframe={timeframe}
+                onTimeframeChange={handleTimeframeChange}
+                compact={false}
+                currentSpeed={simulationState.speed}
+              />
+            </div>
+            
+            <Chart 
+              symbol={symbol} 
               timeframe={timeframe}
-              onTimeframeChange={handleTimeframeChange}
-              compact={false}
-              currentSpeed={simulationState.speed}
+              selectedStartTime={selectedStartTime}
+              simulationState={simulationState}
             />
           </div>
-          
-          <Chart 
-            symbol={symbol} 
-            timeframe={timeframe}
-            selectedStartTime={selectedStartTime}
-            simulationState={simulationState}
-          />
+
+          {/* Trading Panel */}
+          <div style={{
+            flex: '1',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px'
+          }}>
+            {/* Order Panel */}
+            <OrderPanel
+              symbol={symbol}
+              currentPrice={simulationState.lastCandle?.close || 0}
+              simulationState={simulationState.state}
+            />
+
+            {/* Portfolio */}
+            <Portfolio
+              connectionState={connectionState}
+              currentPrice={simulationState.lastCandle?.close || 0}
+              symbol={symbol}
+              simulationState={simulationState.state}
+            />
+          </div>
         </div>
       </div>
     </div>

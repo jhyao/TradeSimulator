@@ -288,6 +288,7 @@ Implement order placement, confirmation, execution notification through WebSocke
 Implement user interface components for order placement, integrating with the order execution system from Task 6.1.
 
 ### Requirements
+- Set initial funds before start simulation
 - Order placement form with buy/sell controls
 - Integration with WebSocket notifications for real-time feedback
 - Basic order confirmation and status display
