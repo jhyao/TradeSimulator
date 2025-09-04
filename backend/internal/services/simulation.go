@@ -98,7 +98,7 @@ func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService) *Simu
 	}
 }
 
-func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int) error {
+func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int, initialFunding float64, portfolioService *PortfolioService) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -140,6 +140,14 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 	se.lastCandleEndTime = startTime
 	se.currentIndex = 0
 	se.state = StatePlaying
+
+	// Reset portfolio with initial funding (use user ID 1 as default for simulation)
+	if portfolioService != nil && initialFunding > 0 {
+		if err := portfolioService.ResetPortfolioWithFunding(1, initialFunding); err != nil {
+			return fmt.Errorf("failed to reset portfolio with initial funding: %w", err)
+		}
+		log.Printf("Portfolio reset with initial funding: $%.2f", initialFunding)
+	}
 
 	// Initialize continuous data loading state
 	se.isLoadingData = false

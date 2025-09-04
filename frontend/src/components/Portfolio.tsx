@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
+import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
 
 interface PortfolioProps {
   connectionState: ConnectionState;
@@ -57,7 +58,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8080/api/v1/portfolio/', {
+      const response = await fetch('/api/v1/portfolio/', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -89,7 +90,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8080/api/v1/portfolio/reset', {
+      const response = await fetch('/api/v1/portfolio/reset', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,21 +128,8 @@ const Portfolio: React.FC<PortfolioProps> = ({
     }
   }, [connectionState, simulationState, fetchPortfolio]);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value);
-  };
-
   const formatPercent = (value: number) => {
-    return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-  };
-
-  const formatQuantity = (value: number) => {
-    return value.toFixed(8).replace(/\.?0+$/, '');
+    return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
   };
 
   if (loading && !portfolioData) {

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatNumber } from '../utils/numberFormat';
 
 // Speed presets for quick selection
 const SPEED_PRESETS = [
@@ -17,11 +18,11 @@ const SPEED_PRESETS = [
 const getSpeedDescription = (speed: number): string => {
   const marketMinPerSec = speed / 60;
   if (marketMinPerSec < 1) {
-    return `${(60/speed).toFixed(1)}s → 1m (${speed}x)`;
+    return `${formatNumber(60/speed, 1, 1)}s → 1m (${speed}x)`;
   } else if (marketMinPerSec < 60) {
-    return `1s → ${marketMinPerSec}m (${speed}x)`;
+    return `1s → ${formatNumber(marketMinPerSec, 1, 1)}m (${speed}x)`;
   } else {
-    return `1s → ${(marketMinPerSec/60).toFixed(1)}h (${speed}x)`;
+    return `1s → ${formatNumber(marketMinPerSec/60, 1, 1)}h (${speed}x)`;
   }
 };
 

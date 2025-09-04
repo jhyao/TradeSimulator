@@ -19,7 +19,7 @@ interface WebSocketContextType {
   connect: () => void;
   disconnect: () => void;
   // Simulation control methods
-  startSimulation: (symbol: string, startTime: Date, interval: string, speed: number) => Promise<void>;
+  startSimulation: (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => Promise<void>;
   stopSimulation: () => Promise<void>;
   pauseSimulation: () => Promise<void>;
   resumeSimulation: () => Promise<void>;
@@ -43,8 +43,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   
   // Removed unused request tracking variables for now
   
-  // WebSocket URL - using localhost for development
-  const wsUrl = 'ws://localhost:8080/ws';
+  // WebSocket URL - using relative path for proxy
+  // const host = window.location.hostname;
+  const host = "localhost:8080"
+  const wsUrl = `ws://${host}/websocket/v1/simulation`;
   const { connectionState, lastMessage, sendMessage, connect, disconnect } = useWebSocket(wsUrl);
 
   // Handle incoming messages
@@ -181,12 +183,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [connectionState, sendMessage]);
 
   // Simulation control methods - memoized to prevent useEffect loops
-  const startSimulation = React.useCallback(async (symbol: string, startTime: Date, interval: string, speed: number) => {
+  const startSimulation = React.useCallback(async (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => {
     return sendControlMessage('simulation_control_start', {
       symbol,
       startTime: startTime.getTime(),
       interval,
-      speed
+      speed,
+      initialFunding
     });
   }, [sendControlMessage]);
 

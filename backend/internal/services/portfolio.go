@@ -112,6 +112,11 @@ func (ps *PortfolioService) GetUserPortfolio(userID uint) (*PortfolioSummary, er
 
 // getOrCreatePortfolio gets or creates a portfolio for the user
 func (ps *PortfolioService) getOrCreatePortfolio(userID uint) (*models.Portfolio, error) {
+	return ps.getOrCreatePortfolioWithFunding(userID, 10000.0)
+}
+
+// getOrCreatePortfolioWithFunding gets or creates a portfolio for the user with custom initial funding
+func (ps *PortfolioService) getOrCreatePortfolioWithFunding(userID uint, initialFunding float64) (*models.Portfolio, error) {
 	var portfolio models.Portfolio
 	err := ps.db.Where("user_id = ?", userID).First(&portfolio).Error
 	
@@ -119,8 +124,8 @@ func (ps *PortfolioService) getOrCreatePortfolio(userID uint) (*models.Portfolio
 		// Create new portfolio with initial funds
 		portfolio = models.Portfolio{
 			UserID:      userID,
-			CashBalance: 10000.0, // Start with $10,000
-			TotalValue:  10000.0,
+			CashBalance: initialFunding,
+			TotalValue:  initialFunding,
 		}
 		
 		if err := ps.db.Create(&portfolio).Error; err != nil {
@@ -150,6 +155,11 @@ func (ps *PortfolioService) getSimulationSymbol() string {
 
 // ResetPortfolio resets a user's portfolio to initial state (for testing/reset)
 func (ps *PortfolioService) ResetPortfolio(userID uint) error {
+	return ps.ResetPortfolioWithFunding(userID, 10000.0)
+}
+
+// ResetPortfolioWithFunding resets a user's portfolio with custom initial funding
+func (ps *PortfolioService) ResetPortfolioWithFunding(userID uint, initialFunding float64) error {
 	tx := ps.db.Begin()
 	if tx.Error != nil {
 		return tx.Error
@@ -166,10 +176,10 @@ func (ps *PortfolioService) ResetPortfolio(userID uint) error {
 		return fmt.Errorf("failed to delete positions: %w", err)
 	}
 
-	// Reset portfolio to initial state
+	// Reset portfolio to initial state with custom funding
 	if err := tx.Model(&models.Portfolio{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
-		"cash_balance": 10000.0,
-		"total_value":  10000.0,
+		"cash_balance": initialFunding,
+		"total_value":  initialFunding,
 	}).Error; err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to reset portfolio: %w", err)

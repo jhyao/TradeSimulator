@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"tradesimulator/internal/models"
+	"tradesimulator/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -63,10 +64,11 @@ type ConnectionStatusData struct {
 
 // Simulation control message structures
 type SimulationStartData struct {
-	Symbol    string `json:"symbol"`
-	StartTime int64  `json:"startTime"`
-	Interval  string `json:"interval"`
-	Speed     int    `json:"speed"`
+	Symbol         string  `json:"symbol"`
+	StartTime      int64   `json:"startTime"`
+	Interval       string  `json:"interval"`
+	Speed          int     `json:"speed"`
+	InitialFunding float64 `json:"initialFunding"`
 }
 
 type SimulationSetSpeedData struct {
@@ -270,22 +272,6 @@ func (wh *WebSocketHandler) GetHub() *Hub {
 	return wh.hub
 }
 
-// TestBroadcast sends a test message to all connected clients
-func (wh *WebSocketHandler) TestBroadcast(c *gin.Context) {
-	testData := PriceUpdateData{
-		Symbol:    "BTCUSDT",
-		Price:     50000.00,
-		Timestamp: GetCurrentTimestamp(),
-	}
-	
-	wh.hub.BroadcastMessage(PriceUpdate, testData)
-	
-	c.JSON(200, gin.H{
-		"message": "Test message broadcasted",
-		"clients": wh.hub.GetClientCount(),
-		"data":    testData,
-	})
-}
 
 // readPump handles reading messages from the WebSocket connection
 func (c *Client) readPump() {
@@ -406,16 +392,29 @@ func (c *Client) handleStartSimulation(data interface{}) {
 		return
 	}
 
-	if err := c.SimulationHandler.engine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed); err != nil {
+	// Validate initial funding
+	if startData.InitialFunding <= 0 {
+		c.sendResponse(false, "Invalid initial funding", nil, "Initial funding must be greater than 0")
+		return
+	}
+
+	// Get portfolio service from order handler
+	var portfolioService *services.PortfolioService
+	if c.OrderHandler != nil {
+		portfolioService = c.OrderHandler.GetPortfolioService()
+	}
+
+	if err := c.SimulationHandler.engine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding, portfolioService); err != nil {
 		c.sendResponse(false, "Failed to start simulation", nil, err.Error())
 		return
 	}
 
 	c.sendResponse(true, "Simulation started", map[string]interface{}{
-		"symbol":    startData.Symbol,
-		"startTime": startData.StartTime,
-		"interval":  startData.Interval,
-		"speed":     startData.Speed,
+		"symbol":         startData.Symbol,
+		"startTime":      startData.StartTime,
+		"interval":       startData.Interval,
+		"speed":          startData.Speed,
+		"initialFunding": startData.InitialFunding,
 	}, "")
 }
 

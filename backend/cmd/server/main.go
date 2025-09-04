@@ -89,11 +89,11 @@ func main() {
 	// Swagger endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// WebSocket endpoint
-	r.GET("/ws", wsHandler.HandleWebSocket)
-
-	// Test endpoint for WebSocket broadcasting
-	r.POST("/test/broadcast", wsHandler.TestBroadcast)
+	// WebSocket routes group
+	ws := r.Group("/websocket/v1")
+	{
+		ws.GET("/simulation", wsHandler.HandleWebSocket)
+	}
 
 	// API routes group
 	api := r.Group("/api/v1")

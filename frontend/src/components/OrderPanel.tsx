@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { ConnectionState } from '../hooks/useWebSocket';
+import { formatCurrency } from '../utils/numberFormat';
 
 interface OrderPanelProps {
   symbol: string;
@@ -239,7 +240,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           color: '#6c757d'
         }}>
           <span>Price:</span>
-          <span>${currentPrice.toFixed(2)}</span>
+          <span>{formatCurrency(currentPrice)}</span>
         </div>
       </div>
 
@@ -254,11 +255,11 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
             <span>Subtotal:</span>
-            <span>${estimatedTotal.toFixed(2)}</span>
+            <span>{formatCurrency(estimatedTotal)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
             <span>Fee (0.1%):</span>
-            <span>${fee.toFixed(2)}</span>
+            <span>{formatCurrency(fee)}</span>
           </div>
           <div style={{
             display: 'flex',
@@ -268,7 +269,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
             paddingTop: '4px'
           }}>
             <span>Total:</span>
-            <span>${totalWithFee.toFixed(2)}</span>
+            <span>{formatCurrency(totalWithFee)}</span>
           </div>
         </div>
       )}

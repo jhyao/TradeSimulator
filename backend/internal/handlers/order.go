@@ -15,6 +15,11 @@ type OrderHandler struct {
 	portfolioService *services.PortfolioService
 }
 
+// GetPortfolioService returns the portfolio service
+func (oh *OrderHandler) GetPortfolioService() *services.PortfolioService {
+	return oh.portfolioService
+}
+
 // NewOrderHandler creates a new order handler
 func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService) *OrderHandler {
 	return &OrderHandler{

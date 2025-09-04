@@ -33,6 +33,7 @@ function AppContent() {
   const [symbol, setSymbol] = useState('BTCUSDT');
   const [timeframe, setTimeframe] = useState('1h');
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
+  const [initialFunding, setInitialFunding] = useState<number>(10000);
   const [simulationState, setSimulationState] = useState<SimulationState>({
     state: 'stopped',
     speed: 60, // Default to 60x (1s → 1m)
@@ -142,7 +143,7 @@ function AppContent() {
     if (!selectedStartTime) return;
 
     try {
-      await wsStartSimulation(symbol, selectedStartTime, timeframe, simulationState.speed);
+      await wsStartSimulation(symbol, selectedStartTime, timeframe, simulationState.speed, initialFunding);
       setSimulationState(prev => ({ 
         ...prev, 
         state: 'playing',
@@ -173,7 +174,7 @@ function AppContent() {
         alert(`Failed to start simulation: ${errorMessage}`);
       }
     }
-  }, [selectedStartTime, symbol, timeframe, simulationState.speed, wsStartSimulation, wsGetStatus]);
+  }, [selectedStartTime, symbol, timeframe, simulationState.speed, initialFunding, wsStartSimulation, wsGetStatus]);
 
   const handlePauseSimulation = useCallback(async () => {
     try {
@@ -248,7 +249,7 @@ function AppContent() {
           Trade Simulator
         </h1>
         
-        {/* 4-Block Control Panel */}
+        {/* 5-Block Control Panel */}
         <div style={{
           display: 'flex',
           height: '120px',
@@ -277,7 +278,7 @@ function AppContent() {
           
           {/* Block 2: Start Time Picker */}
           <div style={{
-            flex: '1.5',
+            flex: '1.2',
             padding: '15px',
             borderRight: '1px solid #dee2e6',
             display: 'flex',
@@ -291,8 +292,47 @@ function AppContent() {
               compact={true}
             />
           </div>
+
+          {/* Block 3: Initial Funding */}
+          <div style={{
+            flex: '1',
+            padding: '15px',
+            borderRight: '1px solid #dee2e6',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <div>
+              <label style={{ 
+                fontSize: '12px', 
+                color: '#666',
+                display: 'block',
+                marginBottom: '4px'
+              }}>
+                Initial Funding ($)
+              </label>
+              <input
+                type="number"
+                min="1000"
+                max="1000000"
+                step="1000"
+                value={initialFunding}
+                onChange={(e) => setInitialFunding(Math.max(1000, parseInt(e.target.value) || 1000))}
+                disabled={simulationState.state !== 'stopped'}
+                style={{
+                  width: '100%',
+                  padding: '6px 8px',
+                  fontSize: '14px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  backgroundColor: simulationState.state !== 'stopped' ? '#f5f5f5' : 'white'
+                }}
+                placeholder="10000"
+              />
+            </div>
+          </div>
           
-          {/* Block 3: Speed Controls */}
+          {/* Block 4: Speed Controls */}
           <div style={{
             flex: '1.5',
             padding: '15px',
@@ -315,7 +355,7 @@ function AppContent() {
             />
           </div>
           
-          {/* Block 4: Start/Stop Controls */}
+          {/* Block 5: Start/Stop Controls */}
           <div style={{
             flex: '1',
             padding: '15px',

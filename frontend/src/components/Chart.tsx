@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import { MarketApiService } from '../services/marketApi';
 import { CandleAggregator } from '../utils/CandleAggregator';
+import { formatPrice, formatPercentage } from '../utils/numberFormat';
 
 // OHLCV interface moved to CandleAggregator
 
@@ -85,7 +86,7 @@ const Chart: React.FC<ChartProps> = ({
 
   const fetchEarliestTime = useCallback(async () => {
     try {
-      const response = await fetch(`http://localhost:8080/api/v1/market/earliest-time/${symbol}`);
+      const response = await fetch(`/api/v1/market/earliest-time/${symbol}`);
       if (response.ok) {
         const data = await response.json();
         const earliestTimeInSeconds = Math.floor(data.earliestTime / 1000);
@@ -617,19 +618,19 @@ const Chart: React.FC<ChartProps> = ({
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
             <span style={{ color: '#666' }}>OPEN:</span>
-            <span style={{ fontWeight: 'bold' }}>{crosshairData.open.toFixed(4)}</span>
+            <span style={{ fontWeight: 'bold' }}>{formatPrice(crosshairData.open)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
             <span style={{ color: '#666' }}>HIGH:</span>
-            <span style={{ fontWeight: 'bold', color: color_palette.green }}>{crosshairData.high.toFixed(4)}</span>
+            <span style={{ fontWeight: 'bold', color: color_palette.green }}>{formatPrice(crosshairData.high)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
             <span style={{ color: '#666' }}>LOW:</span>
-            <span style={{ fontWeight: 'bold', color: color_palette.red }}>{crosshairData.low.toFixed(4)}</span>
+            <span style={{ fontWeight: 'bold', color: color_palette.red }}>{formatPrice(crosshairData.low)}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
             <span style={{ color: '#666' }}>CLOSE:</span>
-            <span style={{ fontWeight: 'bold' }}>{crosshairData.close.toFixed(4)}</span>
+            <span style={{ fontWeight: 'bold' }}>{formatPrice(crosshairData.close)}</span>
           </div>
           <div style={{ borderTop: '1px solid #eee', paddingTop: '4px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
@@ -638,13 +639,13 @@ const Chart: React.FC<ChartProps> = ({
                 fontWeight: 'bold', 
                 color: crosshairData.change >= 0 ? color_palette.green : color_palette.red 
               }}>
-                {crosshairData.change >= 0 ? '+' : ''}{crosshairData.change.toFixed(4)} ({crosshairData.changePercent >= 0 ? '+' : ''}{crosshairData.changePercent.toFixed(2)}%)
+                {crosshairData.change >= 0 ? '+' : ''}{formatPrice(crosshairData.change)} ({crosshairData.changePercent >= 0 ? '+' : ''}{formatPercentage(crosshairData.changePercent)})
               </span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#666' }}>AMPLITUDE:</span>
               <span style={{ fontWeight: 'bold', color: '#333' }}>
-                {crosshairData.amplitude.toFixed(4)} ({crosshairData.amplitudePercent.toFixed(2)}%)
+                {formatPrice(crosshairData.amplitude)} ({formatPercentage(crosshairData.amplitudePercent)})
               </span>
             </div>
           </div>
