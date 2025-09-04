@@ -31,7 +31,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     lastOrderMessage: ''
   });
 
-  const isDisabled = simulationState !== 'playing' || 
+  const isDisabled = (simulationState !== 'playing' && simulationState !== 'paused') || 
                     connectionState !== ConnectionState.CONNECTED ||
                     orderState.isPlacing;
 

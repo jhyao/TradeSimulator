@@ -14,6 +14,7 @@ interface Position {
     id: number;
     user_id: number;
     symbol: string;
+    base_currency: string;
     quantity: number;
     average_price: number;
     total_cost: number;
@@ -279,19 +280,23 @@ const Portfolio: React.FC<PortfolioProps> = ({
               Positions
             </h4>
             
-            {!portfolioData.positions || portfolioData.positions.length === 0 ? (
-              <div style={{
-                textAlign: 'center',
-                padding: '20px',
-                color: '#6c757d',
-                fontSize: '14px',
-                fontStyle: 'italic'
-              }}>
-                No positions
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {portfolioData.positions.map((pos, index) => (
+            {(() => {
+              // Filter out USDT positions since they're shown as cash balance
+              const tradingPositions = portfolioData.positions?.filter(pos => pos.position.symbol !== 'USDT') || [];
+              
+              return !tradingPositions || tradingPositions.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '20px',
+                  color: '#6c757d',
+                  fontSize: '14px',
+                  fontStyle: 'italic'
+                }}>
+                  No positions
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {tradingPositions.map((pos, index) => (
                   <div
                     key={index}
                     style={{
@@ -336,7 +341,8 @@ const Portfolio: React.FC<PortfolioProps> = ({
                   </div>
                 ))}
               </div>
-            )}
+              );
+            })()}
           </div>
 
           {lastRefresh && (

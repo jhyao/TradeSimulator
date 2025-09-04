@@ -3,10 +3,10 @@ package services
 import (
 	"fmt"
 	"log"
-	"time"
 
 	"tradesimulator/internal/database"
 	"tradesimulator/internal/models"
+
 	"gorm.io/gorm"
 )
 
@@ -47,15 +47,19 @@ func (os *OrderService) PlaceMarketOrder(userID uint, symbol string, side models
 		return nil, nil, fmt.Errorf("invalid current price: %f", currentPrice)
 	}
 
+	// Get current simulation time
+	simulationTime := os.simulationEngine.GetCurrentSimulationTime()
+
 	// Create order record
 	order := &models.Order{
-		UserID:    userID,
-		Symbol:    symbol,
-		Side:      side,
-		Type:      models.OrderTypeMarket,
-		Quantity:  quantity,
-		Status:    models.OrderStatusPending,
-		PlacedAt:  time.Now(),
+		UserID:       userID,
+		Symbol:       symbol,
+		BaseCurrency: "USDT", // Default to USDT for now
+		Side:         side,
+		Type:         models.OrderTypeMarket,
+		Quantity:     quantity,
+		Status:       models.OrderStatusPending,
+		PlacedAt:     simulationTime,
 	}
 
 	// Start transaction
@@ -75,7 +79,7 @@ func (os *OrderService) PlaceMarketOrder(userID uint, symbol string, side models
 		return nil, nil, fmt.Errorf("failed to create order: %w", err)
 	}
 
-	log.Printf("Created order %d: %s %s %.8f %s at simulation price %.8f", 
+	log.Printf("Created order %d: %s %s %.8f %s at simulation price %.8f",
 		order.ID, string(side), symbol, quantity, string(models.OrderTypeMarket), currentPrice)
 
 	// Broadcast order placed notification
@@ -106,7 +110,7 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 	// Calculate fee
 	fee := os.calculateFee(order.Quantity, price)
 	totalCost := order.Quantity * price
-	
+
 	// For buy orders, add fee to total cost
 	// For sell orders, subtract fee from proceeds
 	var netCashImpact float64
@@ -116,12 +120,12 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 		netCashImpact = totalCost - fee // Positive because we're receiving cash
 	}
 
-	// Update portfolio cash balance
-	if err := os.updatePortfolioCash(tx, order.UserID, netCashImpact); err != nil {
-		return nil, fmt.Errorf("failed to update portfolio cash: %w", err)
+	// Update USDT position (cash)
+	if err := os.updatePosition(tx, order.UserID, "USDT", "USDT", netCashImpact, 1.0, 0); err != nil {
+		return nil, fmt.Errorf("failed to update USDT position: %w", err)
 	}
 
-	// Update position
+	// Update position for the traded symbol
 	var positionQuantityChange float64
 	if order.Side == models.OrderSideBuy {
 		positionQuantityChange = order.Quantity
@@ -129,16 +133,17 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 		positionQuantityChange = -order.Quantity
 	}
 
-	if err := os.updatePosition(tx, order.UserID, order.Symbol, positionQuantityChange, price, fee); err != nil {
+	if err := os.updatePosition(tx, order.UserID, order.Symbol, order.BaseCurrency, positionQuantityChange, price, fee); err != nil {
 		return nil, fmt.Errorf("failed to update position: %w", err)
 	}
 
+	// Get current simulation time
+	simulationTime := os.simulationEngine.GetCurrentSimulationTime()
+
 	// Update order status
-	executedAt := time.Now()
 	order.Status = models.OrderStatusExecuted
-	order.ExecutedAt = &executedAt
+	order.ExecutedAt = &simulationTime
 	order.ExecutedPrice = &price
-	order.Fee = fee
 
 	if err := tx.Save(order).Error; err != nil {
 		return nil, fmt.Errorf("failed to update order: %w", err)
@@ -146,21 +151,22 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 
 	// Create trade record
 	trade := &models.Trade{
-		OrderID:    order.ID,
-		UserID:     order.UserID,
-		Symbol:     order.Symbol,
-		Side:       order.Side,
-		Quantity:   order.Quantity,
-		Price:      price,
-		Fee:        fee,
-		ExecutedAt: executedAt,
+		OrderID:      order.ID,
+		UserID:       order.UserID,
+		Symbol:       order.Symbol,
+		BaseCurrency: order.BaseCurrency,
+		Side:         order.Side,
+		Quantity:     order.Quantity,
+		Price:        price,
+		Fee:          fee,
+		ExecutedAt:   simulationTime,
 	}
 
 	if err := tx.Create(trade).Error; err != nil {
 		return nil, fmt.Errorf("failed to create trade: %w", err)
 	}
 
-	log.Printf("Executed order %d: %s %s %.8f at %.8f, fee: %.8f, net cash impact: %.8f", 
+	log.Printf("Executed order %d: %s %s %.8f at %.8f, fee: %.8f, net cash impact: %.8f",
 		order.ID, string(order.Side), order.Symbol, order.Quantity, price, fee, netCashImpact)
 
 	return trade, nil
@@ -184,13 +190,7 @@ func (os *OrderService) validateOrder(userID uint, symbol string, side models.Or
 		return fmt.Errorf("quantity must be positive: %f", quantity)
 	}
 
-	// Get portfolio to check funds
-	portfolio, err := os.getOrCreatePortfolio(userID)
-	if err != nil {
-		return fmt.Errorf("failed to get portfolio: %w", err)
-	}
-
-	// For buy orders, check if user has sufficient cash
+	// For buy orders, check if user has sufficient USDT balance
 	if side == models.OrderSideBuy {
 		currentPrice := os.simulationEngine.GetCurrentPrice()
 		if currentPrice <= 0 {
@@ -201,14 +201,31 @@ func (os *OrderService) validateOrder(userID uint, symbol string, side models.Or
 		fee := os.calculateFee(quantity, currentPrice)
 		requiredCash := totalCost + fee
 
-		if portfolio.CashBalance < requiredCash {
-			return fmt.Errorf("insufficient funds: required %.8f, available %.8f", requiredCash, portfolio.CashBalance)
+		// Get USDT position to check available balance
+		usdtPosition, err := os.getPosition(userID, "USDT", "USDT")
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return fmt.Errorf("failed to check USDT balance: %w", err)
+		}
+
+		availableCash := 0.0
+		if usdtPosition != nil {
+			availableCash = usdtPosition.Quantity
+		} else {
+			// Create initial USDT position if it doesn't exist
+			if err := os.createInitialUSDTPosition(userID); err != nil {
+				return fmt.Errorf("failed to create initial USDT position: %w", err)
+			}
+			availableCash = 10000.0 // Default initial balance
+		}
+
+		if availableCash < requiredCash {
+			return fmt.Errorf("insufficient funds: required %.8f, available %.8f", requiredCash, availableCash)
 		}
 	}
 
 	// For sell orders, check if user has sufficient position
 	if side == models.OrderSideSell {
-		position, err := os.getPosition(userID, symbol)
+		position, err := os.getPosition(userID, symbol, "USDT")
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return fmt.Errorf("failed to check position: %w", err)
 		}
@@ -231,42 +248,29 @@ func (os *OrderService) calculateFee(quantity, price float64) float64 {
 	return quantity * price * DefaultTradingFeeRate
 }
 
-// getOrCreatePortfolio gets or creates a portfolio for the user
-func (os *OrderService) getOrCreatePortfolio(userID uint) (*models.Portfolio, error) {
-	var portfolio models.Portfolio
-	err := os.db.Where("user_id = ?", userID).First(&portfolio).Error
-	
-	if err == gorm.ErrRecordNotFound {
-		// Create new portfolio with initial funds
-		portfolio = models.Portfolio{
-			UserID:      userID,
-			CashBalance: 10000.0, // Start with $10,000
-			TotalValue:  10000.0,
-		}
-		
-		if err := os.db.Create(&portfolio).Error; err != nil {
-			return nil, fmt.Errorf("failed to create portfolio: %w", err)
-		}
-		
-		log.Printf("Created new portfolio for user %d with initial balance: $%.2f", userID, portfolio.CashBalance)
-	} else if err != nil {
-		return nil, err
+// createInitialUSDTPosition creates an initial USDT position for a new user
+func (os *OrderService) createInitialUSDTPosition(userID uint) error {
+	position := &models.Position{
+		UserID:       userID,
+		Symbol:       "USDT",
+		BaseCurrency: "USDT",
+		Quantity:     10000.0, // Start with $10,000
+		AveragePrice: 1.0,     // USDT always has price = 1
+		TotalCost:    10000.0,
 	}
-	
-	return &portfolio, nil
+
+	if err := os.db.Create(position).Error; err != nil {
+		return fmt.Errorf("failed to create initial USDT position: %w", err)
+	}
+
+	log.Printf("Created initial USDT position for user %d with balance: $%.2f", userID, position.Quantity)
+	return nil
 }
 
-// updatePortfolioCash updates the cash balance in a transaction
-func (os *OrderService) updatePortfolioCash(tx *gorm.DB, userID uint, cashChange float64) error {
-	return tx.Model(&models.Portfolio{}).
-		Where("user_id = ?", userID).
-		Update("cash_balance", gorm.Expr("cash_balance + ?", cashChange)).Error
-}
-
-// getPosition gets a position for user and symbol
-func (os *OrderService) getPosition(userID uint, symbol string) (*models.Position, error) {
+// getPosition gets a position for user, symbol and base currency
+func (os *OrderService) getPosition(userID uint, symbol string, baseCurrency string) (*models.Position, error) {
 	var position models.Position
-	err := os.db.Where("user_id = ? AND symbol = ?", userID, symbol).First(&position).Error
+	err := os.db.Where("user_id = ? AND symbol = ? AND base_currency = ?", userID, symbol, baseCurrency).First(&position).Error
 	if err != nil {
 		return nil, err
 	}
@@ -274,15 +278,16 @@ func (os *OrderService) getPosition(userID uint, symbol string) (*models.Positio
 }
 
 // updatePosition updates or creates a position in a transaction
-func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, symbol string, quantityChange, price, fee float64) error {
+func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, symbol string, baseCurrency string, quantityChange, price, fee float64) error {
 	var position models.Position
-	err := tx.Where("user_id = ? AND symbol = ?", userID, symbol).First(&position).Error
+	err := tx.Where("user_id = ? AND symbol = ? AND base_currency = ?", userID, symbol, baseCurrency).First(&position).Error
 
 	if err == gorm.ErrRecordNotFound {
 		// Create new position
 		position = models.Position{
 			UserID:       userID,
 			Symbol:       symbol,
+			BaseCurrency: baseCurrency,
 			Quantity:     quantityChange,
 			AveragePrice: price,
 			TotalCost:    (quantityChange * price) + fee,
@@ -293,15 +298,19 @@ func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, symbol string, 
 	} else {
 		// Update existing position
 		newQuantity := position.Quantity + quantityChange
-		
+
 		if newQuantity == 0 {
 			// Position closed, delete it
 			return tx.Delete(&position).Error
+		} else if symbol == "USDT" {
+			// For USDT positions, just update quantity (price always 1, no average price calculation needed)
+			position.Quantity = newQuantity
+			position.TotalCost = newQuantity // For USDT, total cost = quantity since price = 1
 		} else if (position.Quantity > 0 && quantityChange > 0) || (position.Quantity < 0 && quantityChange < 0) {
 			// Same direction, update average price
 			newTotalCost := position.TotalCost + (quantityChange * price) + fee
 			newAveragePrice := newTotalCost / newQuantity
-			
+
 			position.Quantity = newQuantity
 			position.AveragePrice = newAveragePrice
 			position.TotalCost = newTotalCost
@@ -311,7 +320,7 @@ func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, symbol string, 
 			// Keep existing average price and update total cost proportionally
 			position.TotalCost = position.AveragePrice * newQuantity
 		}
-		
+
 		return tx.Save(&position).Error
 	}
 }
@@ -321,11 +330,11 @@ func (os *OrderService) broadcastOrderUpdate(eventType string, order *models.Ord
 	data := map[string]interface{}{
 		"order": order,
 	}
-	
+
 	if trade != nil {
 		data["trade"] = trade
 	}
-	
+
 	os.hub.BroadcastMessageString(eventType, data)
 	log.Printf("Broadcasted %s for order %d", eventType, order.ID)
 }
@@ -334,15 +343,15 @@ func (os *OrderService) broadcastOrderUpdate(eventType string, order *models.Ord
 func (os *OrderService) GetUserOrders(userID uint, limit int) ([]models.Order, error) {
 	var orders []models.Order
 	query := os.db.Where("user_id = ?", userID).Order("created_at DESC")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	
+
 	if err := query.Find(&orders).Error; err != nil {
 		return nil, fmt.Errorf("failed to get orders: %w", err)
 	}
-	
+
 	return orders, nil
 }
 
@@ -350,14 +359,14 @@ func (os *OrderService) GetUserOrders(userID uint, limit int) ([]models.Order, e
 func (os *OrderService) GetUserTrades(userID uint, limit int) ([]models.Trade, error) {
 	var trades []models.Trade
 	query := os.db.Where("user_id = ?", userID).Order("executed_at DESC")
-	
+
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
-	
+
 	if err := query.Find(&trades).Error; err != nil {
 		return nil, fmt.Errorf("failed to get trades: %w", err)
 	}
-	
+
 	return trades, nil
 }

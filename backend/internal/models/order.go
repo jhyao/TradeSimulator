@@ -25,14 +25,14 @@ type Order struct {
 	ID           uint        `json:"id" gorm:"primaryKey"`
 	UserID       uint        `json:"user_id" gorm:"index;not null;default:1"` // Default to user 1 for now
 	Symbol       string      `json:"symbol" gorm:"not null;index"`
+	BaseCurrency string      `json:"base_currency" gorm:"not null;index;default:USDT"`
 	Side         OrderSide   `json:"side" gorm:"not null"`
 	Type         OrderType   `json:"type" gorm:"not null"`
 	Quantity     float64     `json:"quantity" gorm:"not null"`
 	Status       OrderStatus `json:"status" gorm:"not null;default:'pending'"`
-	PlacedAt     time.Time   `json:"placed_at" gorm:"not null"`
-	ExecutedAt   *time.Time  `json:"executed_at,omitempty"`
+	PlacedAt     int64       `json:"placed_at" gorm:"not null"` // Simulation time in milliseconds
+	ExecutedAt   *int64      `json:"executed_at,omitempty"` // Simulation time in milliseconds
 	ExecutedPrice *float64    `json:"executed_price,omitempty"`
-	Fee          float64     `json:"fee" gorm:"default:0"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
 }
@@ -47,11 +47,12 @@ type Trade struct {
 	OrderID    uint      `json:"order_id" gorm:"not null;index"`
 	UserID     uint      `json:"user_id" gorm:"index;not null;default:1"` // Default to user 1 for now
 	Symbol     string    `json:"symbol" gorm:"not null;index"`
+	BaseCurrency string  `json:"base_currency" gorm:"not null;index;default:USDT"`
 	Side       OrderSide `json:"side" gorm:"not null"`
 	Quantity   float64   `json:"quantity" gorm:"not null"`
 	Price      float64   `json:"price" gorm:"not null"`
 	Fee        float64   `json:"fee" gorm:"default:0"`
-	ExecutedAt time.Time `json:"executed_at" gorm:"not null"`
+	ExecutedAt int64     `json:"executed_at" gorm:"not null"` // Simulation time in milliseconds
 	CreatedAt  time.Time `json:"created_at"`
 	
 	// Relationships
@@ -62,27 +63,15 @@ func (Trade) TableName() string {
 	return "trades"
 }
 
-// Portfolio represents user's current positions and cash balance
-type Portfolio struct {
-	ID           uint      `json:"id" gorm:"primaryKey"`
-	UserID       uint      `json:"user_id" gorm:"uniqueIndex;not null;default:1"` // One portfolio per user
-	CashBalance  float64   `json:"cash_balance" gorm:"not null;default:0"`
-	TotalValue   float64   `json:"total_value" gorm:"default:0"` // Cash + position values
-	UpdatedAt    time.Time `json:"updated_at"`
-	CreatedAt    time.Time `json:"created_at"`
-}
-
-func (Portfolio) TableName() string {
-	return "portfolios"
-}
-
-// Position represents holdings in a specific symbol
+// Position represents holdings in a specific symbol or base currency (unified model)
+// For base currency positions (e.g., USDT), Symbol="USDT", BaseCurrency="USDT", AveragePrice=1
 type Position struct {
 	ID           uint      `json:"id" gorm:"primaryKey"`
-	UserID       uint      `json:"user_id" gorm:"not null;default:1;uniqueIndex:idx_user_symbol"`
-	Symbol       string    `json:"symbol" gorm:"not null;uniqueIndex:idx_user_symbol"`
+	UserID       uint      `json:"user_id" gorm:"not null;default:1;uniqueIndex:idx_user_symbol_base"`
+	Symbol       string    `json:"symbol" gorm:"not null;uniqueIndex:idx_user_symbol_base"` // ETH, USDT, etc.
+	BaseCurrency string    `json:"base_currency" gorm:"not null;uniqueIndex:idx_user_symbol_base;default:USDT"` // USDT, USD, etc.
 	Quantity     float64   `json:"quantity" gorm:"not null;default:0"` // Can be negative for short positions
-	AveragePrice float64   `json:"average_price" gorm:"not null;default:0"`
+	AveragePrice float64   `json:"average_price" gorm:"not null;default:0"` // Always 1 for base currency positions
 	TotalCost    float64   `json:"total_cost" gorm:"not null;default:0"` // Total cost basis including fees
 	UpdatedAt    time.Time `json:"updated_at"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -91,6 +80,3 @@ type Position struct {
 func (Position) TableName() string {
 	return "positions"
 }
-
-// Add unique constraint on user_id + symbol using GORM tags instead
-// This will be handled by migration or we can add a unique index in the database

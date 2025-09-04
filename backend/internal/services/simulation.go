@@ -703,6 +703,12 @@ func (se *SimulationEngine) IsRunning() bool {
 	return se.state == StatePlaying || se.state == StatePaused
 }
 
+func (se *SimulationEngine) GetCurrentSimulationTime() int64 {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+	return se.currentSimTime
+}
+
 func (se *SimulationEngine) Cleanup() {
 	se.mu.Lock()
 	defer se.mu.Unlock()
