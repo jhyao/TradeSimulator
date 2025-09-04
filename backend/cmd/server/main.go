@@ -68,16 +68,19 @@ func main() {
 	marketHandler := handlers.NewMarketHandler()
 	wsHandler := handlers.NewWebSocketHandler()
 
+	// Initialize portfolio service
+	portfolioService := services.NewPortfolioService()
+	
 	// Initialize simulation engine and handler
-	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService)
+	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService, portfolioService)
 	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
+	simulationRecordHandler := handlers.NewSimulationRecordHandler()
 
-	// Initialize order and portfolio services
-	orderService := services.NewOrderService(simulationEngine, wsHandler.GetHub())
-	portfolioService := services.NewPortfolioService(simulationEngine)
+	// Initialize order service
+	orderService := services.NewOrderService(wsHandler.GetHub())
 
 	// Initialize order handler
-	orderHandler := handlers.NewOrderHandler(orderService, portfolioService)
+	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, simulationEngine)
 
 	// Set handlers on WebSocket handler for message processing
 	wsHandler.SetSimulationHandler(simulationHandler)
@@ -110,11 +113,11 @@ func main() {
 
 		// Simulation endpoints
 		handlers.RegisterSimulationRoutes(api, simulationHandler)
+		handlers.RegisterSimulationRecordRoutes(api, simulationRecordHandler)
 
 		// Order and portfolio endpoints
 		orders := api.Group("/orders")
 		{
-			orders.POST("/", orderHandler.PlaceOrder)
 			orders.GET("/", orderHandler.GetOrders)
 		}
 
@@ -126,7 +129,6 @@ func main() {
 		positions := api.Group("/positions")
 		{
 			positions.GET("/", orderHandler.GetPositions)
-			positions.POST("/reset", orderHandler.ResetPortfolio)
 		}
 	}
 

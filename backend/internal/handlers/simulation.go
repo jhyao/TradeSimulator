@@ -61,7 +61,7 @@ func (sh *SimulationHandler) StartSimulation(c *gin.Context) {
 	}
 
 	// Start the simulation with default funding (REST API doesn't support custom initial funding)
-	if err := sh.engine.Start(req.Symbol, req.Interval, req.StartTime, req.Speed, 10000.0, nil); err != nil {
+	if err := sh.engine.Start(req.Symbol, req.Interval, req.StartTime, req.Speed, 10000.0); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

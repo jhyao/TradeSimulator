@@ -9,12 +9,29 @@ interface OrderNotification {
   timestamp: number;
 }
 
+interface SimulationStatus {
+  state: string;
+  symbol: string;
+  interval: string;
+  speed: number;
+  currentIndex: number;
+  totalCandles: number;
+  progress: number;
+  startTime: string;
+  currentTime: string;
+  currentPrice: number;
+  simulationID: number;
+  isRunning: boolean;
+  simulationTime: number;
+}
+
 interface WebSocketContextType {
   connectionState: ConnectionState;
   lastMessage: WebSocketMessage | null;
   lastPriceUpdate: PriceUpdateData | null;
   lastSimulationUpdate: SimulationUpdateData | null;
   lastOrderNotification: OrderNotification | null;
+  currentSimulationStatus: SimulationStatus | null;
   sendMessage: (message: any) => void;
   connect: () => void;
   disconnect: () => void;
@@ -40,6 +57,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const [lastPriceUpdate, setLastPriceUpdate] = useState<PriceUpdateData | null>(null);
   const [lastSimulationUpdate, setLastSimulationUpdate] = useState<SimulationUpdateData | null>(null);
   const [lastOrderNotification, setLastOrderNotification] = useState<OrderNotification | null>(null);
+  const [currentSimulationStatus, setCurrentSimulationStatus] = useState<SimulationStatus | null>(null);
   
   // Removed unused request tracking variables for now
   
@@ -58,6 +76,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           break;
         case 'simulation_update':
           setLastSimulationUpdate(lastMessage.data as SimulationUpdateData);
+          break;
+        case 'status_update':
+          console.log('Received status update:', lastMessage.data);
+          setCurrentSimulationStatus(lastMessage.data);
           break;
         case 'simulation_start':
         case 'simulation_pause':
@@ -120,6 +142,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // For status requests, resolve with the data
       if (response.data) {
         console.log('Status data:', response.data);
+        // Update simulation status if this is a status response (check for status-specific fields)
+        if (response.data.state !== undefined || response.data.isRunning !== undefined) {
+          console.log('Setting simulation status:', response.data);
+          setCurrentSimulationStatus(response.data);
+        }
       }
     } else {
       console.error('Control operation failed:', response.error || response.message);
@@ -258,12 +285,28 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     });
   }, [sendControlMessage]);
 
+  // Request status when WebSocket connects
+  useEffect(() => {
+    if (connectionState === ConnectionState.CONNECTED) {
+      console.log('WebSocket connected, requesting simulation status...');
+      // Request current simulation status after a short delay to ensure connection is stable
+      const timeoutId = setTimeout(() => {
+        getStatus().catch((error) => {
+          console.error('Failed to get simulation status:', error);
+        });
+      }, 1000); // Increased delay to 1 second
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [connectionState, getStatus]);
+
   const value: WebSocketContextType = {
     connectionState,
     lastMessage,
     lastPriceUpdate,
     lastSimulationUpdate,
     lastOrderNotification,
+    currentSimulationStatus,
     sendMessage,
     connect,
     disconnect,

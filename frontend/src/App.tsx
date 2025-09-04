@@ -8,6 +8,7 @@ import OrderPanel from './components/OrderPanel';
 import Portfolio from './components/Portfolio';
 import TradingTabs from './components/TradingTabs';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
+import { PositionsProvider } from './contexts/PositionsContext';
 import { ConnectionState } from './hooks/useWebSocket';
 // Removed SimulationApiService import - now using WebSocket
 import './App.css';
@@ -380,83 +381,86 @@ function AppContent() {
         </div>
         
         {/* Main Content Area - Chart and Trading */}
-        <div style={{
-          display: 'flex',
-          gap: '20px',
-          marginBottom: '20px'
-        }}>
-          {/* Chart Section */}
+        <PositionsProvider
+          connectionState={connectionState}
+          currentPrice={simulationState.lastCandle?.close || 0}
+          symbol={symbol}
+          simulationState={simulationState.state}
+        >
           <div style={{
-            flex: '2',
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-            overflow: 'hidden'
+            display: 'flex',
+            gap: '20px',
+            marginBottom: '20px'
           }}>
-            {/* Timeframe Selector at top of chart */}
+            {/* Chart Section */}
             <div style={{
-              padding: '10px 15px',
-              backgroundColor: '#f8f9fa',
-              borderBottom: '1px solid #dee2e6',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
+              flex: '2',
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+              overflow: 'hidden'
             }}>
-              <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
-                Price Chart - {symbol}
-              </h3>
-              <TimeframeSelector
+              {/* Timeframe Selector at top of chart */}
+              <div style={{
+                padding: '10px 15px',
+                backgroundColor: '#f8f9fa',
+                borderBottom: '1px solid #dee2e6',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+                  Price Chart - {symbol}
+                </h3>
+                <TimeframeSelector
+                  timeframe={timeframe}
+                  onTimeframeChange={handleTimeframeChange}
+                  compact={false}
+                  currentSpeed={simulationState.speed}
+                />
+              </div>
+              
+              <Chart 
+                symbol={symbol} 
                 timeframe={timeframe}
-                onTimeframeChange={handleTimeframeChange}
-                compact={false}
-                currentSpeed={simulationState.speed}
+                selectedStartTime={selectedStartTime}
+                simulationState={simulationState}
               />
             </div>
-            
-            <Chart 
-              symbol={symbol} 
-              timeframe={timeframe}
-              selectedStartTime={selectedStartTime}
-              simulationState={simulationState}
-            />
+
+            {/* Trading Panel */}
+            <div style={{
+              flex: '1',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px'
+            }}>
+              {/* Order Panel */}
+              <OrderPanel
+                symbol={symbol}
+                currentPrice={simulationState.lastCandle?.close || 0}
+                simulationState={simulationState.state}
+              />
+
+              {/* Portfolio Summary */}
+              <Portfolio
+                initialFunding={initialFunding}
+              />
+            </div>
           </div>
 
-          {/* Trading Panel */}
+          {/* Trading Tabs Section - Under Chart */}
           <div style={{
-            flex: '1',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px'
+            marginBottom: '20px'
           }}>
-            {/* Order Panel */}
-            <OrderPanel
-              symbol={symbol}
-              currentPrice={simulationState.lastCandle?.close || 0}
-              simulationState={simulationState.state}
-            />
-
-            {/* Portfolio Summary */}
-            <Portfolio
+            <TradingTabs
               connectionState={connectionState}
               currentPrice={simulationState.lastCandle?.close || 0}
               symbol={symbol}
               simulationState={simulationState.state}
-              initialFunding={initialFunding}
             />
           </div>
-        </div>
-
-        {/* Trading Tabs Section - Under Chart */}
-        <div style={{
-          marginBottom: '20px'
-        }}>
-          <TradingTabs
-            connectionState={connectionState}
-            currentPrice={simulationState.lastCandle?.close || 0}
-            symbol={symbol}
-            simulationState={simulationState.state}
-          />
-        </div>
+        </PositionsProvider>
       </div>
     </div>
   );

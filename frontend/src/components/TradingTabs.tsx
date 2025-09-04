@@ -31,12 +31,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
     switch (activeTab) {
       case 'positions':
         return (
-          <PositionsList
-            connectionState={connectionState}
-            currentPrice={currentPrice}
-            symbol={symbol}
-            simulationState={simulationState}
-          />
+          <PositionsList />
         );
       case 'orders':
         return (

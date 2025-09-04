@@ -1,34 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ConnectionState } from '../hooks/useWebSocket';
+import React, { useMemo } from 'react';
+import { usePositions, CalculatedPosition } from '../contexts/PositionsContext';
 import { formatCurrency, formatPercentage } from '../utils/numberFormat';
 
 interface PortfolioProps {
-  connectionState: ConnectionState;
-  currentPrice: number;
-  symbol: string;
-  simulationState: 'stopped' | 'playing' | 'paused';
   initialFunding: number;
 }
 
-interface Position {
-  id: number;
-  user_id: number;
-  symbol: string;
-  base_currency: string;
-  quantity: number;
-  average_price: number;
-  total_cost: number;
-  updated_at: string;
-  created_at: string;
-}
-
-interface CalculatedPosition {
-  position: Position;
-  currentPrice: number;
-  marketValue: number;
-  unrealizedPnL: number;
-  totalReturn: number;
-}
 
 interface PortfolioSummary {
   positions: CalculatedPosition[];
@@ -38,52 +15,21 @@ interface PortfolioSummary {
 }
 
 const Portfolio: React.FC<PortfolioProps> = ({ 
-  connectionState, 
-  currentPrice, 
-  symbol,
-  simulationState,
   initialFunding
 }) => {
-  const [portfolioData, setPortfolioData] = useState<PortfolioSummary | null>(null);
-  const [rawPositions, setRawPositions] = useState<Position[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const { calculatedPositions, loading, error, lastRefresh, fetchPositions, resetPortfolio } = usePositions();
 
-  const calculatePortfolio = useCallback((positions: Position[], marketPrice: number, currentSymbol: string): PortfolioSummary => {
-    const calculatedPositions: CalculatedPosition[] = [];
+  const portfolioData = useMemo((): PortfolioSummary => {
     let totalValue = 0;
     let cashBalance = 0;
 
-    positions.forEach(position => {
-      let positionPrice: number;
-      
-      if (position.symbol === 'USDT') {
-        positionPrice = 1.0;
-        cashBalance = position.quantity;
-      } else if (position.symbol === currentSymbol) {
-        positionPrice = marketPrice;
-      } else {
-        positionPrice = position.average_price;
+    calculatedPositions.forEach(calcPos => {
+      if (calcPos.position.symbol === 'USDT') {
+        cashBalance = calcPos.position.quantity;
       }
-
-      const marketValue = position.quantity * positionPrice;
-      const unrealizedPnL = marketValue - position.total_cost;
-      const totalReturn = position.total_cost !== 0 ? (unrealizedPnL / position.total_cost) * 100 : 0;
-
-      const calculatedPosition: CalculatedPosition = {
-        position,
-        currentPrice: positionPrice,
-        marketValue,
-        unrealizedPnL,
-        totalReturn
-      };
-
-      calculatedPositions.push(calculatedPosition);
-      totalValue += marketValue;
+      totalValue += calcPos.marketValue;
     });
 
-    // Calculate total P&L based on initial funding
     const totalPnL = totalValue - initialFunding;
 
     return {
@@ -92,92 +38,8 @@ const Portfolio: React.FC<PortfolioProps> = ({
       totalPnL,
       cashBalance
     };
-  }, [initialFunding]);
+  }, [calculatedPositions, initialFunding]);
 
-
-  const fetchPortfolio = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/v1/positions/', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setRawPositions(data.positions);
-      setPortfolioData(calculatePortfolio(data.positions, currentPrice, symbol));
-      setLastRefresh(new Date());
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to load positions: ${errorMessage}`);
-      console.error('Error fetching positions:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentPrice, symbol, calculatePortfolio]);
-
-  const resetPortfolio = useCallback(async () => {
-    if (!window.confirm('Are you sure you want to reset your portfolio? This will clear all positions and reset your balance to $10,000.')) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/v1/positions/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      // Refresh portfolio data after reset
-      await fetchPortfolio();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to reset portfolio: ${errorMessage}`);
-      console.error('Error resetting portfolio:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchPortfolio]);
-
-
-  // Auto-refresh portfolio data
-  useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
-      fetchPortfolio();
-      
-      // Set up auto-refresh every 5 seconds during simulation
-      const interval = simulationState === 'playing' 
-        ? setInterval(fetchPortfolio, 5000)
-        : null;
-
-      return () => {
-        if (interval) clearInterval(interval);
-      };
-    }
-  }, [connectionState, simulationState, fetchPortfolio]);
-
-  // Recalculate portfolio when current price changes
-  useEffect(() => {
-    if (rawPositions && currentPrice > 0) {
-      setPortfolioData(calculatePortfolio(rawPositions, currentPrice, symbol));
-    }
-  }, [rawPositions, currentPrice, symbol, calculatePortfolio]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
@@ -221,7 +83,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
         </h3>
         <div>
           <button
-            onClick={fetchPortfolio}
+            onClick={fetchPositions}
             disabled={loading}
             style={{
               padding: '6px 12px',

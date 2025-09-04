@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
 import { formatCurrency, formatQuantity } from '../utils/numberFormat';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 
 interface TradeHistoryProps {
   connectionState: ConnectionState;
@@ -26,13 +27,29 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const { currentSimulationStatus } = useWebSocketContext();
 
   const fetchTrades = useCallback(async () => {
+    // If no simulation status available yet, wait
+    if (!currentSimulationStatus) {
+      return;
+    }
+    
+    // If simulation is running, use its ID
+    let simulationId = currentSimulationStatus.simulationID;
+    
+    // If no running simulation but we have a simulation ID from history, use it
+    if (!currentSimulationStatus.isRunning && !simulationId) {
+      setTrades([]);
+      setError('No simulation running. Start a simulation to see trades.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch('/api/v1/trades/?limit=50', {
+      const response = await fetch(`/api/v1/trades/?limit=50&simulation_id=${simulationId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -53,7 +70,7 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentSimulationStatus]);
 
   // Auto-refresh trades data
   useEffect(() => {

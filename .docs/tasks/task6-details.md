@@ -92,7 +92,13 @@ Update2: pnl update in frontend
 1. change backend portfolio apis to position apis
 2. move pnl calculation from backend to frontend, backend return holding quantity and average price, front end show pnl on price update.
 
+
 Update3: simulation record
 1. Add simulation table, record fixed simulation params (symbol, start simulation time, end simulation time, start time, end time, initial funding, mode(spot/future), not include variable params (speed, timeframe), reserve an extra column for other configs (json format), status, total value.
 2. Create a new simulation record when start simulation, update status when pause/resume/stop.
 3. Add simulation id in order, trade, position tables to bind these records with simulation batches.
+
+Update4: Simulation history view and load
+1. Add simulation history tab in the bottom area, except basic infos, add total P$L and % columns
+2. When open the ui page, load the simulation status to the last simulation record
+3. 

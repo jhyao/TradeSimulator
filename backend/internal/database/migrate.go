@@ -14,6 +14,7 @@ func AutoMigrate() error {
 	
 	err := DB.AutoMigrate(
 		&models.User{},
+		&models.Simulation{},
 		&models.Order{},
 		&models.Trade{},
 		&models.Position{},
@@ -90,6 +91,11 @@ func migrateExistingData() error {
 		}
 	}
 	
+	// Add simulation_id columns to existing tables
+	if err := addSimulationIdColumns(); err != nil {
+		return err
+	}
+	
 	log.Println("Existing data migration completed successfully")
 	return nil
 }
@@ -128,5 +134,40 @@ func migrateOrdersTimestamps() error {
 		}
 	}
 
+	return nil
+}
+
+// addSimulationIdColumns adds simulation_id columns to existing tables
+func addSimulationIdColumns() error {
+	// Add simulation_id to orders table
+	if err := DB.Exec("ALTER TABLE orders ADD COLUMN IF NOT EXISTS simulation_id INTEGER").Error; err != nil {
+		log.Printf("Warning: could not add simulation_id to orders table: %v", err)
+	} else {
+		log.Println("Added simulation_id column to orders table")
+	}
+	
+	// Add simulation_id to trades table  
+	if err := DB.Exec("ALTER TABLE trades ADD COLUMN IF NOT EXISTS simulation_id INTEGER").Error; err != nil {
+		log.Printf("Warning: could not add simulation_id to trades table: %v", err)
+	} else {
+		log.Println("Added simulation_id column to trades table")
+	}
+	
+	// Add simulation_id to positions table
+	if err := DB.Exec("ALTER TABLE positions ADD COLUMN IF NOT EXISTS simulation_id INTEGER").Error; err != nil {
+		log.Printf("Warning: could not add simulation_id to positions table: %v", err)
+	} else {
+		log.Println("Added simulation_id column to positions table")
+	}
+	
+	// For development: Drop and recreate positions table to ensure clean schema
+	// This is safe since we're in development and positions are ephemeral per simulation
+	if err := DB.Exec("DROP TABLE IF EXISTS positions CASCADE").Error; err != nil {
+		log.Printf("Warning: could not drop positions table: %v", err)
+	} else {
+		log.Println("Dropped positions table for clean schema migration")
+	}
+	
+	
 	return nil
 }

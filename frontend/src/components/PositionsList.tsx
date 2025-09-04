@@ -1,177 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ConnectionState } from '../hooks/useWebSocket';
+import React from 'react';
+import { usePositions } from '../contexts/PositionsContext';
 import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
 
-interface PositionsListProps {
-  connectionState: ConnectionState;
-  currentPrice: number;
-  symbol: string;
-  simulationState: 'stopped' | 'playing' | 'paused';
-}
+interface PositionsListProps {}
 
-interface Position {
-  id: number;
-  user_id: number;
-  symbol: string;
-  base_currency: string;
-  quantity: number;
-  average_price: number;
-  total_cost: number;
-  updated_at: string;
-  created_at: string;
-}
 
-interface CalculatedPosition {
-  position: Position;
-  currentPrice: number;
-  marketValue: number;
-  unrealizedPnL: number;
-  totalReturn: number;
-}
+const PositionsList: React.FC<PositionsListProps> = () => {
+  const { calculatedPositions, loading, error, lastRefresh, fetchPositions } = usePositions();
 
-const PositionsList: React.FC<PositionsListProps> = ({ 
-  connectionState, 
-  currentPrice, 
-  symbol,
-  simulationState 
-}) => {
-  const [positions, setPositions] = useState<CalculatedPosition[] | null>(null);
-  const [rawPositions, setRawPositions] = useState<Position[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  const calculatePositions = useCallback((positions: Position[], marketPrice: number, currentSymbol: string): CalculatedPosition[] => {
-    const calculatedPositions: CalculatedPosition[] = [];
-
-    positions.forEach(position => {
-      let positionPrice: number;
-      
-      if (position.symbol === 'USDT') {
-        positionPrice = 1.0;
-      } else if (position.symbol === currentSymbol) {
-        positionPrice = marketPrice;
-      } else {
-        positionPrice = position.average_price;
-      }
-
-      const marketValue = position.quantity * positionPrice;
-      const unrealizedPnL = marketValue - position.total_cost;
-      const totalReturn = position.total_cost !== 0 ? (unrealizedPnL / position.total_cost) * 100 : 0;
-
-      const calculatedPosition: CalculatedPosition = {
-        position,
-        currentPrice: positionPrice,
-        marketValue,
-        unrealizedPnL,
-        totalReturn
-      };
-
-      calculatedPositions.push(calculatedPosition);
-    });
-
-    return calculatedPositions;
-  }, []);
-
-  const fetchPositions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/v1/positions/', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setRawPositions(data.positions);
-      setPositions(calculatePositions(data.positions, currentPrice, symbol));
-      setLastRefresh(new Date());
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to load positions: ${errorMessage}`);
-      console.error('Error fetching positions:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentPrice, symbol, calculatePositions]);
-
-  const handleClosePosition = useCallback(async (position: Position) => {
-    if (!window.confirm(`Are you sure you want to close your ${position.symbol} position? This will sell all ${formatQuantity(position.quantity)} at market price.`)) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/v1/orders/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          symbol: position.symbol,
-          side: 'sell',
-          quantity: position.quantity
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.success) {
-        // Refresh positions data after successful close
-        await fetchPositions();
-      } else {
-        throw new Error(data.message || 'Failed to close position');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to close position: ${errorMessage}`);
-      console.error('Error closing position:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchPositions]);
-
-  // Auto-refresh positions data
-  useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
-      fetchPositions();
-      
-      // Set up auto-refresh every 5 seconds during simulation
-      const interval = simulationState === 'playing' 
-        ? setInterval(fetchPositions, 5000)
-        : null;
-
-      return () => {
-        if (interval) clearInterval(interval);
-      };
-    }
-  }, [connectionState, simulationState, fetchPositions]);
-
-  // Recalculate positions when current price changes
-  useEffect(() => {
-    if (rawPositions && currentPrice > 0) {
-      setPositions(calculatePositions(rawPositions, currentPrice, symbol));
-    }
-  }, [rawPositions, currentPrice, symbol, calculatePositions]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
   };
 
-  if (loading && !positions) {
+  if (loading && !calculatedPositions.length) {
     return (
       <div style={{
         backgroundColor: 'white',
@@ -233,12 +76,12 @@ const PositionsList: React.FC<PositionsListProps> = ({
         </div>
       )}
 
-      {positions && (
+      {calculatedPositions && (
         <>
           <div>
             {(() => {
               // Filter out USDT positions since they're shown as cash balance in portfolio summary
-              const tradingPositions = positions?.filter(pos => pos.position.symbol !== 'USDT') || [];
+              const tradingPositions = calculatedPositions?.filter(pos => pos.position.symbol !== 'USDT') || [];
               
               return !tradingPositions || tradingPositions.length === 0 ? (
                 <div style={{
@@ -257,7 +100,7 @@ const PositionsList: React.FC<PositionsListProps> = ({
                     key={index}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '1fr auto auto auto auto auto',
+                      gridTemplateColumns: '1fr auto auto auto auto',
                       gap: '10px',
                       alignItems: 'center',
                       padding: '10px',
@@ -300,24 +143,6 @@ const PositionsList: React.FC<PositionsListProps> = ({
                       </div>
                     </div>
 
-                    <div style={{ textAlign: 'right' }}>
-                      <button
-                        onClick={() => handleClosePosition(pos.position)}
-                        disabled={loading}
-                        style={{
-                          padding: '4px 8px',
-                          border: '1px solid #dc3545',
-                          borderRadius: '4px',
-                          backgroundColor: 'white',
-                          color: '#dc3545',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontSize: '11px',
-                          fontWeight: 'bold'
-                        }}
-                      >
-                        Close
-                      </button>
-                    </div>
                   </div>
                 ))}
               </div>

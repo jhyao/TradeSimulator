@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"tradesimulator/internal/models"
-	"tradesimulator/internal/services"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -28,6 +27,7 @@ type MessageType string
 const (
 	PriceUpdate      MessageType = "price_update"
 	ConnectionStatus MessageType = "connection_status"
+	StatusUpdate     MessageType = "status_update"
 	Error           MessageType = "error"
 	// Simulation control messages
 	SimulationStart     MessageType = "simulation_control_start"
@@ -398,16 +398,14 @@ func (c *Client) handleStartSimulation(data interface{}) {
 		return
 	}
 
-	// Get portfolio service from order handler
-	var portfolioService *services.PortfolioService
-	if c.OrderHandler != nil {
-		portfolioService = c.OrderHandler.GetPortfolioService()
-	}
-
-	if err := c.SimulationHandler.engine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding, portfolioService); err != nil {
+	if err := c.SimulationHandler.engine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding); err != nil {
 		c.sendResponse(false, "Failed to start simulation", nil, err.Error())
 		return
 	}
+
+	// Get updated status and broadcast it
+	status := c.SimulationHandler.engine.GetStatus()
+	c.Hub.BroadcastMessage(StatusUpdate, status)
 
 	c.sendResponse(true, "Simulation started", map[string]interface{}{
 		"symbol":         startData.Symbol,
@@ -424,6 +422,10 @@ func (c *Client) handleStopSimulation() {
 		return
 	}
 
+	// Get updated status and broadcast it
+	status := c.SimulationHandler.engine.GetStatus()
+	c.Hub.BroadcastMessage(StatusUpdate, status)
+
 	c.sendResponse(true, "Simulation stopped", nil, "")
 }
 
@@ -433,6 +435,10 @@ func (c *Client) handlePauseSimulation() {
 		return
 	}
 
+	// Get updated status and broadcast it
+	status := c.SimulationHandler.engine.GetStatus()
+	c.Hub.BroadcastMessage(StatusUpdate, status)
+
 	c.sendResponse(true, "Simulation paused", nil, "")
 }
 
@@ -441,6 +447,10 @@ func (c *Client) handleResumeSimulation() {
 		c.sendResponse(false, "Failed to resume simulation", nil, err.Error())
 		return
 	}
+
+	// Get updated status and broadcast it
+	status := c.SimulationHandler.engine.GetStatus()
+	c.Hub.BroadcastMessage(StatusUpdate, status)
 
 	c.sendResponse(true, "Simulation resumed", nil, "")
 }
@@ -512,8 +522,20 @@ func (c *Client) handlePlaceOrder(data interface{}) {
 		return
 	}
 
+	// Check if simulation is running and get current data
+	status := c.OrderHandler.simulationEngine.GetStatus()
+	if !status.IsRunning {
+		c.sendOrderResponse(false, "Simulation not running", nil, "Cannot place orders when simulation is not running")
+		return
+	}
+
+	if status.CurrentPrice <= 0 {
+		c.sendOrderResponse(false, "Invalid current price", nil, "Cannot determine current price")
+		return
+	}
+
 	// Place the order (using default user ID 1 for now)
-	order, trade, err := c.OrderHandler.orderService.PlaceMarketOrder(1, orderData.Symbol, models.OrderSide(side), orderData.Quantity)
+	order, trade, err := c.OrderHandler.orderService.PlaceMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
 	if err != nil {
 		c.sendOrderResponse(false, "Failed to place order", nil, err.Error())
 		return

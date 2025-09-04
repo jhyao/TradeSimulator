@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"tradesimulator/internal/database"
 	"tradesimulator/internal/models"
 )
 
@@ -22,6 +23,12 @@ const (
 	StatePlaying SimulationState = "playing"
 	StatePaused  SimulationState = "paused"
 )
+
+// ExtraConfig represents additional simulation configuration
+type ExtraConfig struct {
+	Speed     int    `json:"speed,omitempty"`
+	Timeframe string `json:"timeframe,omitempty"`
+}
 
 type SimulationEngine struct {
 	mu             sync.RWMutex
@@ -55,6 +62,11 @@ type SimulationEngine struct {
 	isLoadingData     bool      // Flag to prevent concurrent loading
 	dataLoadChan      chan bool // Channel to signal successful data load
 	lastDataLoadTime  int64     // Last timestamp of loaded data in milliseconds
+
+	// Simulation record integration
+	currentSimulationID uint                     // Current simulation record ID
+	simulationRecordSvc *SimulationRecordService // Service for managing simulation records
+	portfolioService    *PortfolioService        // Service for portfolio operations
 }
 
 type SimulationUpdateData struct {
@@ -77,9 +89,12 @@ type SimulationStatus struct {
 	StartTime    string  `json:"startTime"`
 	CurrentTime  string  `json:"currentTime"`
 	CurrentPrice float64 `json:"currentPrice"`
+	SimulationID uint    `json:"simulationID"`
+	IsRunning    bool    `json:"isRunning"`
+	SimulationTime int64 `json:"simulationTime"`
 }
 
-func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService) *SimulationEngine {
+func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService, portfolioService *PortfolioService) *SimulationEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &SimulationEngine{
@@ -95,10 +110,12 @@ func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService) *Simu
 		dataLoadThreshold:   0.8,  // Load more data when 80% consumed
 		maxBufferSize:       5000, // Keep max 5000 candles in memory
 		dataLoadChan:        make(chan bool, 1),
+		simulationRecordSvc: NewSimulationRecordService(),
+		portfolioService:    portfolioService,
 	}
 }
 
-func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int, initialFunding float64, portfolioService *PortfolioService) error {
+func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int, initialFunding float64) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -141,12 +158,23 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 	se.currentIndex = 0
 	se.state = StatePlaying
 
-	// Reset portfolio with initial funding (use user ID 1 as default for simulation)
-	if portfolioService != nil && initialFunding > 0 {
-		if err := portfolioService.ResetPortfolioWithFunding(1, initialFunding); err != nil {
-			return fmt.Errorf("failed to reset portfolio with initial funding: %w", err)
+	// Create simulation record
+	extraConfig := &ExtraConfig{
+		Speed:     speed,
+		Timeframe: interval,
+	}
+	simulation, err := se.simulationRecordSvc.CreateSimulationRecord(1, symbol, startTime, 0, initialFunding, models.SimulationModeSpot, extraConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create simulation record: %w", err)
+	}
+	se.currentSimulationID = simulation.ID
+
+	// Create initial USDT position for the simulation (use user ID 1 as default for simulation)
+	if initialFunding > 0 {
+		if err := se.createInitialUSDTPosition(1, &simulation.ID, initialFunding); err != nil {
+			return fmt.Errorf("failed to create initial USDT position: %w", err)
 		}
-		log.Printf("Portfolio reset with initial funding: $%.2f", initialFunding)
+		log.Printf("Created initial USDT position with funding: $%.2f", initialFunding)
 	}
 
 	// Initialize continuous data loading state
@@ -217,6 +245,10 @@ func (se *SimulationEngine) runSimulation() {
 					// Reached end of dataset - but don't stop immediately if we're loading more data
 					if !se.isLoadingData {
 						log.Printf("Simulation reached end of base dataset")
+
+						// Complete simulation record with final portfolio value
+						se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusCompleted, se.currentSimTime)
+
 						se.state = StateStopped
 						se.broadcastStateChange("simulation_stop", "Simulation completed - reached end of data")
 						se.mu.Unlock()
@@ -422,6 +454,7 @@ func (se *SimulationEngine) isTimeframeAllowed(timeframe string, speed int) bool
 }
 
 func (se *SimulationEngine) Pause() error {
+	log.Printf("Pause requested")
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -430,6 +463,10 @@ func (se *SimulationEngine) Pause() error {
 	}
 
 	se.state = StatePaused
+
+	// Calculate current portfolio value and update simulation record
+	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusPaused, se.currentSimTime)
+
 	log.Printf("Simulation paused at index %d", se.currentIndex)
 	se.broadcastStateChange("simulation_pause", "Simulation paused")
 	return nil
@@ -444,6 +481,10 @@ func (se *SimulationEngine) Resume() error {
 	}
 
 	se.state = StatePlaying
+
+	// Update simulation record status
+	se.updateSimulationStatus(models.SimulationStatusRunning)
+
 	log.Printf("Simulation resumed at index %d", se.currentIndex)
 	se.broadcastStateChange("simulation_resume", "Simulation resumed")
 	return nil
@@ -456,6 +497,9 @@ func (se *SimulationEngine) Stop() error {
 	if se.state == StateStopped {
 		return nil // Already stopped
 	}
+
+	// Calculate final portfolio value and complete simulation record
+	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusStopped, se.currentSimTime)
 
 	se.state = StateStopped
 	se.currentIndex = 0
@@ -673,41 +717,22 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 	progress := float64(0)
 
 	return SimulationStatus{
-		State:        string(se.state),
-		Symbol:       se.symbol,
-		Interval:     se.interval,
-		Speed:        se.speed,
-		CurrentIndex: se.currentIndex,
-		TotalCandles: len(se.baseDataset),
-		Progress:     progress,
-		StartTime:    fmt.Sprintf("%d", se.startTime),
-		CurrentTime:  currentTime,
-		CurrentPrice: currentPrice,
+		State:          string(se.state),
+		Symbol:         se.symbol,
+		Interval:       se.interval,
+		Speed:          se.speed,
+		CurrentIndex:   se.currentIndex,
+		TotalCandles:   len(se.baseDataset),
+		Progress:       progress,
+		StartTime:      fmt.Sprintf("%d", se.startTime),
+		CurrentTime:    currentTime,
+		CurrentPrice:   currentPrice,
+		SimulationID:   se.currentSimulationID,
+		IsRunning:      se.state == StatePlaying || se.state == StatePaused,
+		SimulationTime: se.currentSimTime,
 	}
 }
 
-func (se *SimulationEngine) GetCurrentPrice() float64 {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-
-	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
-		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
-		return lastProcessedCandle.Close
-	}
-	return 0
-}
-
-func (se *SimulationEngine) IsRunning() bool {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-	return se.state == StatePlaying || se.state == StatePaused
-}
-
-func (se *SimulationEngine) GetCurrentSimulationTime() int64 {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-	return se.currentSimTime
-}
 
 func (se *SimulationEngine) Cleanup() {
 	se.mu.Lock()
@@ -725,6 +750,109 @@ func (se *SimulationEngine) Cleanup() {
 	}
 
 	log.Printf("Simulation engine cleanup completed")
+}
+
+// createInitialUSDTPosition creates an initial USDT position for a simulation
+func (se *SimulationEngine) createInitialUSDTPosition(userID uint, simulationID *uint, initialFunding float64) error {
+	position := &models.Position{
+		UserID:       userID,
+		SimulationID: simulationID,
+		Symbol:       "USDT",
+		BaseCurrency: "USDT",
+		Quantity:     initialFunding,
+		AveragePrice: 1.0, // USDT always has price = 1
+		TotalCost:    initialFunding,
+	}
+
+	if err := database.DB.Create(position).Error; err != nil {
+		return fmt.Errorf("failed to create initial USDT position: %w", err)
+	}
+
+	return nil
+}
+
+
+// updateSimulationStatusWithPortfolioValue updates simulation status with current portfolio value calculation
+func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status models.SimulationStatus, endSimTime int64) {
+	if se.currentSimulationID == 0 {
+		return
+	}
+
+	currentPrice := 0.0
+	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
+		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
+		currentPrice = lastProcessedCandle.Close
+	}
+
+	simulationID := se.currentSimulationID
+	symbol := se.symbol
+	
+	if currentPrice > 0 {
+		// Calculate current portfolio value using lock-free version
+		if totalValue, err := se.calculateCurrentPortfolioValue(currentPrice, simulationID, symbol); err != nil {
+			log.Printf("Failed to calculate portfolio value: %v", err)
+			// Fallback to simple status update
+			if err := se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
+				log.Printf("Failed to update simulation status to %s: %v", status, err)
+			}
+		} else {
+			// Update with calculated portfolio value
+			if err := se.simulationRecordSvc.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, &totalValue); err != nil {
+				log.Printf("Failed to update simulation with portfolio calculation to %s: %v", status, err)
+			}
+		}
+	} else {
+		// If no price available, just update status
+		var err error
+		if endSimTime != 0 {
+			err = se.simulationRecordSvc.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, nil)
+		} else {
+			err = se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status)
+		}
+		if err != nil {
+			log.Printf("Failed to update simulation status to %s: %v", status, err)
+		}
+	}
+}
+
+func (se *SimulationEngine) updateSimulationStatus(status models.SimulationStatus) {
+	if se.currentSimulationID == 0 {
+		return
+	}
+
+	if err := se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
+		log.Printf("Failed to update simulation status to %s: %v", status, err)
+	}
+}
+
+
+// calculateCurrentPortfolioValue calculates portfolio value without acquiring internal locks
+func (se *SimulationEngine) calculateCurrentPortfolioValue(currentPrice float64, simulationID uint, symbol string) (float64, error) {
+	// Use portfolio service to get positions for current simulation
+	positions, err := se.portfolioService.GetUserPositions(1, simulationID) // Pass simulationID directly
+	if err != nil {
+		return 0, fmt.Errorf("failed to get positions: %w", err)
+	}
+
+	var totalValue float64
+	for _, position := range positions {
+		var marketValue float64
+
+		if position.Symbol == "USDT" {
+			// USDT is always worth 1:1
+			marketValue = position.Quantity
+		} else if position.Symbol == symbol {
+			// Use current price for the simulation symbol
+			marketValue = position.Quantity * currentPrice
+		} else {
+			// For other symbols, assume 0 value (shouldn't happen in single-symbol simulation)
+			marketValue = 0
+		}
+
+		totalValue += marketValue
+	}
+
+	return totalValue, nil
 }
 
 // loadMoreHistoricalData loads additional historical data from the last loaded timestamp

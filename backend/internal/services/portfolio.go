@@ -10,17 +10,16 @@ import (
 
 // PortfolioService handles portfolio and position management
 type PortfolioService struct {
-	db               *gorm.DB
-	simulationEngine *SimulationEngine
+	db *gorm.DB
 }
 
 // NewPortfolioService creates a new portfolio service
-func NewPortfolioService(simulationEngine *SimulationEngine) *PortfolioService {
+func NewPortfolioService() *PortfolioService {
 	return &PortfolioService{
-		db:               database.GetDB(),
-		simulationEngine: simulationEngine,
+		db: database.GetDB(),
 	}
 }
+
 
 // PortfolioSummary represents complete portfolio information using unified Position model
 type PortfolioSummary struct {
@@ -49,23 +48,11 @@ type PositionSummary struct {
 }
 
 // GetUserPortfolio gets complete portfolio summary for a user using unified Position model
-func (ps *PortfolioService) GetUserPortfolio(userID uint) (*PortfolioSummary, error) {
+func (ps *PortfolioService) GetUserPortfolio(userID uint, simulationID uint, symbol string, currentPrice float64) (*PortfolioSummary, error) {
 	// Get all positions for the user
-	positions, err := ps.getUserPositions(userID)
+	positions, err := ps.GetUserPositions(userID, simulationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
-	}
-
-	// If no positions exist, create initial USDT position
-	if len(positions) == 0 {
-		if err := ps.createInitialUSDTPosition(userID); err != nil {
-			return nil, fmt.Errorf("failed to create initial USDT position: %w", err)
-		}
-		// Retry getting positions
-		positions, err = ps.getUserPositions(userID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get positions after creation: %w", err)
-		}
 	}
 
 	// Calculate position summaries with P&L
@@ -74,8 +61,6 @@ func (ps *PortfolioService) GetUserPortfolio(userID uint) (*PortfolioSummary, er
 	var totalUnrealizedPnL float64
 	var cashBalance float64
 
-	currentPrice := ps.simulationEngine.GetCurrentPrice()
-
 	for _, position := range positions {
 		var positionPrice float64
 		
@@ -83,7 +68,7 @@ func (ps *PortfolioService) GetUserPortfolio(userID uint) (*PortfolioSummary, er
 			// USDT always has price = 1
 			positionPrice = 1.0
 			cashBalance = position.Quantity
-		} else if position.Symbol == ps.getSimulationSymbol() {
+		} else if position.Symbol == symbol {
 			// Use current simulation price for the main trading symbol
 			positionPrice = currentPrice
 		} else {
@@ -140,95 +125,15 @@ func (ps *PortfolioService) GetUserPortfolio(userID uint) (*PortfolioSummary, er
 	return summary, nil
 }
 
-// createInitialUSDTPosition creates an initial USDT position for a new user
-func (ps *PortfolioService) createInitialUSDTPosition(userID uint) error {
-	position := &models.Position{
-		UserID:       userID,
-		Symbol:       "USDT",
-		BaseCurrency: "USDT",
-		Quantity:     10000.0, // Start with $10,000
-		AveragePrice: 1.0,     // USDT always has price = 1
-		TotalCost:    10000.0,
-	}
-	
-	if err := ps.db.Create(position).Error; err != nil {
-		return fmt.Errorf("failed to create initial USDT position: %w", err)
-	}
-	
-	return nil
-}
 
-// getUserPositions gets all positions for a user
-func (ps *PortfolioService) getUserPositions(userID uint) ([]models.Position, error) {
+
+// GetUserPositionsLockFree gets all positions for a user without calling GetStatus (to avoid deadlocks)
+func (ps *PortfolioService) GetUserPositions(userID uint, simulationID uint) ([]models.Position, error) {
 	var positions []models.Position
-	if err := ps.db.Where("user_id = ?", userID).Find(&positions).Error; err != nil {
+	if err := ps.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID).Find(&positions).Error; err != nil {
 		return nil, err
 	}
 	return positions, nil
 }
 
-// GetUserPositions gets all positions for a user (public method for API)
-func (ps *PortfolioService) GetUserPositions(userID uint) ([]models.Position, error) {
-	positions, err := ps.getUserPositions(userID)
-	if err != nil {
-		return nil, err
-	}
-	
-	// If no positions exist, create initial USDT position
-	if len(positions) == 0 {
-		if err := ps.createInitialUSDTPosition(userID); err != nil {
-			return nil, fmt.Errorf("failed to create initial USDT position: %w", err)
-		}
-		// Retry getting positions
-		return ps.getUserPositions(userID)
-	}
-	
-	return positions, nil
-}
 
-// getSimulationSymbol gets the current simulation symbol
-func (ps *PortfolioService) getSimulationSymbol() string {
-	status := ps.simulationEngine.GetStatus()
-	return status.Symbol
-}
-
-// ResetPortfolio resets a user's portfolio to initial state (for testing/reset)
-func (ps *PortfolioService) ResetPortfolio(userID uint) error {
-	return ps.ResetPortfolioWithFunding(userID, 10000.0)
-}
-
-// ResetPortfolioWithFunding resets a user's positions with custom initial USDT funding
-func (ps *PortfolioService) ResetPortfolioWithFunding(userID uint, initialFunding float64) error {
-	tx := ps.db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	// Delete all positions
-	if err := tx.Where("user_id = ?", userID).Delete(&models.Position{}).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to delete positions: %w", err)
-	}
-
-	// Create new USDT position with initial funding
-	position := &models.Position{
-		UserID:       userID,
-		Symbol:       "USDT",
-		BaseCurrency: "USDT",
-		Quantity:     initialFunding,
-		AveragePrice: 1.0,
-		TotalCost:    initialFunding,
-	}
-	
-	if err := tx.Create(position).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to create initial USDT position: %w", err)
-	}
-
-	return tx.Commit().Error
-}

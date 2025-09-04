@@ -4,84 +4,45 @@ import (
 	"net/http"
 	"strconv"
 
-	"tradesimulator/internal/models"
 	"tradesimulator/internal/services"
 	"github.com/gin-gonic/gin"
 )
 
 // OrderHandler handles order-related HTTP and WebSocket requests
 type OrderHandler struct {
-	orderService     *services.OrderService
-	portfolioService *services.PortfolioService
+	orderService      *services.OrderService
+	portfolioService  *services.PortfolioService
+	simulationEngine  *services.SimulationEngine
 }
 
-// GetPortfolioService returns the portfolio service
-func (oh *OrderHandler) GetPortfolioService() *services.PortfolioService {
-	return oh.portfolioService
-}
 
 // NewOrderHandler creates a new order handler
-func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService) *OrderHandler {
+func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService, simulationEngine *services.SimulationEngine) *OrderHandler {
 	return &OrderHandler{
 		orderService:     orderService,
 		portfolioService: portfolioService,
+		simulationEngine: simulationEngine,
 	}
 }
 
-// PlaceOrderRequest represents the HTTP request for placing an order
-type PlaceOrderRequest struct {
-	Symbol   string  `json:"symbol" binding:"required"`
-	Side     string  `json:"side" binding:"required"`     // "buy" or "sell"
-	Quantity float64 `json:"quantity" binding:"required"`
-}
-
-// PlaceOrder handles HTTP requests to place an order
-func (oh *OrderHandler) PlaceOrder(c *gin.Context) {
-	var req PlaceOrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Convert side string to OrderSide enum
-	var side models.OrderSide
-	switch req.Side {
-	case "buy":
-		side = models.OrderSideBuy
-	case "sell":
-		side = models.OrderSideSell
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order side. Must be 'buy' or 'sell'"})
-		return
-	}
-
-	// For now, use default user ID 1
-	userID := uint(1)
-
-	// Place the order
-	order, trade, err := oh.orderService.PlaceMarketOrder(userID, req.Symbol, side, req.Quantity)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	response := gin.H{
-		"success": true,
-		"message": "Order placed successfully",
-		"order":   order,
-	}
-
-	if trade != nil {
-		response["trade"] = trade
-	}
-
-	c.JSON(http.StatusOK, response)
-}
 
 // GetOrders handles HTTP requests to get user orders
 func (oh *OrderHandler) GetOrders(c *gin.Context) {
 	// For now, use default user ID 1
 	userID := uint(1)
+
+	// Get simulation ID from query parameter
+	simulationIDStr := c.Query("simulation_id")
+	if simulationIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "simulation_id parameter is required"})
+		return
+	}
+
+	simulationID, err := strconv.ParseUint(simulationIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation_id parameter"})
+		return
+	}
 
 	// Get limit from query parameter
 	limitStr := c.DefaultQuery("limit", "50")
@@ -90,7 +51,7 @@ func (oh *OrderHandler) GetOrders(c *gin.Context) {
 		limit = 50
 	}
 
-	orders, err := oh.orderService.GetUserOrders(userID, limit)
+	orders, err := oh.orderService.GetUserOrders(userID, uint(simulationID), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -107,6 +68,19 @@ func (oh *OrderHandler) GetTrades(c *gin.Context) {
 	// For now, use default user ID 1
 	userID := uint(1)
 
+	// Get simulation ID from query parameter
+	simulationIDStr := c.Query("simulation_id")
+	if simulationIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "simulation_id parameter is required"})
+		return
+	}
+
+	simulationID, err := strconv.ParseUint(simulationIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation_id parameter"})
+		return
+	}
+
 	// Get limit from query parameter
 	limitStr := c.DefaultQuery("limit", "50")
 	limit, err := strconv.Atoi(limitStr)
@@ -114,7 +88,7 @@ func (oh *OrderHandler) GetTrades(c *gin.Context) {
 		limit = 50
 	}
 
-	trades, err := oh.orderService.GetUserTrades(userID, limit)
+	trades, err := oh.orderService.GetUserTrades(userID, uint(simulationID), limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -131,7 +105,20 @@ func (oh *OrderHandler) GetPositions(c *gin.Context) {
 	// For now, use default user ID 1
 	userID := uint(1)
 
-	positions, err := oh.portfolioService.GetUserPositions(userID)
+	// Get simulation ID from query parameter
+	simulationIDStr := c.Query("simulation_id")
+	if simulationIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "simulation_id parameter is required"})
+		return
+	}
+
+	simulationID, err := strconv.ParseUint(simulationIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation_id parameter"})
+		return
+	}
+
+	positions, err := oh.portfolioService.GetUserPositions(userID, uint(simulationID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -142,18 +129,3 @@ func (oh *OrderHandler) GetPositions(c *gin.Context) {
 	})
 }
 
-// ResetPortfolio handles HTTP requests to reset user portfolio (for testing)
-func (oh *OrderHandler) ResetPortfolio(c *gin.Context) {
-	// For now, use default user ID 1
-	userID := uint(1)
-
-	if err := oh.portfolioService.ResetPortfolio(userID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Portfolio reset successfully",
-	})
-}

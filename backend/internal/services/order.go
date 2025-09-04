@@ -16,43 +16,33 @@ const (
 
 // OrderService handles order placement and execution
 type OrderService struct {
-	db               *gorm.DB
-	simulationEngine *SimulationEngine
-	hub              WebSocketHub
+	db  *gorm.DB
+	hub WebSocketHub
 }
 
 // NewOrderService creates a new order service
-func NewOrderService(simulationEngine *SimulationEngine, hub WebSocketHub) *OrderService {
+func NewOrderService(hub WebSocketHub) *OrderService {
 	return &OrderService{
-		db:               database.GetDB(),
-		simulationEngine: simulationEngine,
-		hub:              hub,
+		db:  database.GetDB(),
+		hub: hub,
 	}
 }
 
 // PlaceMarketOrder places a market order and executes it immediately if simulation is running
-func (os *OrderService) PlaceMarketOrder(userID uint, symbol string, side models.OrderSide, quantity float64) (*models.Order, *models.Trade, error) {
+func (os *OrderService) PlaceMarketOrder(userID uint, simulationID uint, symbol string, side models.OrderSide, quantity, currentPrice float64, simulationTime int64) (*models.Order, *models.Trade, error) {
 	// Validate inputs
-	if err := os.validateOrder(userID, symbol, side, quantity); err != nil {
+	if err := os.validateOrder(userID, simulationID, symbol, side, quantity, currentPrice); err != nil {
 		return nil, nil, fmt.Errorf("order validation failed: %w", err)
 	}
 
-	// Check if simulation is running and get current price
-	if !os.simulationEngine.IsRunning() {
-		return nil, nil, fmt.Errorf("simulation not running - cannot place orders")
-	}
-
-	currentPrice := os.simulationEngine.GetCurrentPrice()
 	if currentPrice <= 0 {
 		return nil, nil, fmt.Errorf("invalid current price: %f", currentPrice)
 	}
 
-	// Get current simulation time
-	simulationTime := os.simulationEngine.GetCurrentSimulationTime()
-
 	// Create order record
 	order := &models.Order{
 		UserID:       userID,
+		SimulationID: &simulationID,
 		Symbol:       symbol,
 		BaseCurrency: "USDT", // Default to USDT for now
 		Side:         side,
@@ -86,7 +76,7 @@ func (os *OrderService) PlaceMarketOrder(userID uint, symbol string, side models
 	os.broadcastOrderUpdate("order_placed", order, nil)
 
 	// Execute order immediately (market order)
-	trade, err := os.executeOrder(tx, order, currentPrice)
+	trade, err := os.executeOrder(tx, order, currentPrice, simulationTime)
 	if err != nil {
 		tx.Rollback()
 		return nil, nil, fmt.Errorf("failed to execute order: %w", err)
@@ -106,7 +96,7 @@ func (os *OrderService) PlaceMarketOrder(userID uint, symbol string, side models
 }
 
 // executeOrder executes an order at the given price within a transaction
-func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price float64) (*models.Trade, error) {
+func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price float64, simulationTime int64) (*models.Trade, error) {
 	// Calculate fee
 	fee := os.calculateFee(order.Quantity, price)
 	totalCost := order.Quantity * price
@@ -121,7 +111,7 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 	}
 
 	// Update USDT position (cash)
-	if err := os.updatePosition(tx, order.UserID, "USDT", "USDT", netCashImpact, 1.0, 0); err != nil {
+	if err := os.updatePosition(tx, order.UserID, order.SimulationID, "USDT", "USDT", netCashImpact, 1.0, 0); err != nil {
 		return nil, fmt.Errorf("failed to update USDT position: %w", err)
 	}
 
@@ -133,12 +123,10 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 		positionQuantityChange = -order.Quantity
 	}
 
-	if err := os.updatePosition(tx, order.UserID, order.Symbol, order.BaseCurrency, positionQuantityChange, price, fee); err != nil {
+	if err := os.updatePosition(tx, order.UserID, order.SimulationID, order.Symbol, order.BaseCurrency, positionQuantityChange, price, fee); err != nil {
 		return nil, fmt.Errorf("failed to update position: %w", err)
 	}
 
-	// Get current simulation time
-	simulationTime := os.simulationEngine.GetCurrentSimulationTime()
 
 	// Update order status
 	order.Status = models.OrderStatusExecuted
@@ -153,6 +141,7 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 	trade := &models.Trade{
 		OrderID:      order.ID,
 		UserID:       order.UserID,
+		SimulationID: order.SimulationID, // Use simulation_id from order
 		Symbol:       order.Symbol,
 		BaseCurrency: order.BaseCurrency,
 		Side:         order.Side,
@@ -173,7 +162,7 @@ func (os *OrderService) executeOrder(tx *gorm.DB, order *models.Order, price flo
 }
 
 // validateOrder validates order parameters
-func (os *OrderService) validateOrder(userID uint, symbol string, side models.OrderSide, quantity float64) error {
+func (os *OrderService) validateOrder(userID uint, simulationID uint, symbol string, side models.OrderSide, quantity, currentPrice float64) error {
 	if userID == 0 {
 		return fmt.Errorf("invalid user ID")
 	}
@@ -192,17 +181,13 @@ func (os *OrderService) validateOrder(userID uint, symbol string, side models.Or
 
 	// For buy orders, check if user has sufficient USDT balance
 	if side == models.OrderSideBuy {
-		currentPrice := os.simulationEngine.GetCurrentPrice()
-		if currentPrice <= 0 {
-			return fmt.Errorf("cannot determine current price")
-		}
 
 		totalCost := quantity * currentPrice
 		fee := os.calculateFee(quantity, currentPrice)
 		requiredCash := totalCost + fee
 
 		// Get USDT position to check available balance
-		usdtPosition, err := os.getPosition(userID, "USDT", "USDT")
+		usdtPosition, err := os.getPosition(userID, simulationID, "USDT", "USDT")
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return fmt.Errorf("failed to check USDT balance: %w", err)
 		}
@@ -212,7 +197,7 @@ func (os *OrderService) validateOrder(userID uint, symbol string, side models.Or
 			availableCash = usdtPosition.Quantity
 		} else {
 			// Create initial USDT position if it doesn't exist
-			if err := os.createInitialUSDTPosition(userID); err != nil {
+			if err := os.createInitialUSDTPosition(userID, &simulationID); err != nil {
 				return fmt.Errorf("failed to create initial USDT position: %w", err)
 			}
 			availableCash = 10000.0 // Default initial balance
@@ -225,7 +210,7 @@ func (os *OrderService) validateOrder(userID uint, symbol string, side models.Or
 
 	// For sell orders, check if user has sufficient position
 	if side == models.OrderSideSell {
-		position, err := os.getPosition(userID, symbol, "USDT")
+		position, err := os.getPosition(userID, simulationID, symbol, "USDT")
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return fmt.Errorf("failed to check position: %w", err)
 		}
@@ -249,9 +234,10 @@ func (os *OrderService) calculateFee(quantity, price float64) float64 {
 }
 
 // createInitialUSDTPosition creates an initial USDT position for a new user
-func (os *OrderService) createInitialUSDTPosition(userID uint) error {
+func (os *OrderService) createInitialUSDTPosition(userID uint, simulationID *uint) error {
 	position := &models.Position{
 		UserID:       userID,
+		SimulationID: simulationID,
 		Symbol:       "USDT",
 		BaseCurrency: "USDT",
 		Quantity:     10000.0, // Start with $10,000
@@ -268,9 +254,9 @@ func (os *OrderService) createInitialUSDTPosition(userID uint) error {
 }
 
 // getPosition gets a position for user, symbol and base currency
-func (os *OrderService) getPosition(userID uint, symbol string, baseCurrency string) (*models.Position, error) {
+func (os *OrderService) getPosition(userID uint, simulationID uint, symbol string, baseCurrency string) (*models.Position, error) {
 	var position models.Position
-	err := os.db.Where("user_id = ? AND symbol = ? AND base_currency = ?", userID, symbol, baseCurrency).First(&position).Error
+	err := os.db.Where("user_id = ? AND simulation_id = ? AND symbol = ? AND base_currency = ?", userID, simulationID, symbol, baseCurrency).First(&position).Error
 	if err != nil {
 		return nil, err
 	}
@@ -278,14 +264,15 @@ func (os *OrderService) getPosition(userID uint, symbol string, baseCurrency str
 }
 
 // updatePosition updates or creates a position in a transaction
-func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, symbol string, baseCurrency string, quantityChange, price, fee float64) error {
+func (os *OrderService) updatePosition(tx *gorm.DB, userID uint, simulationID *uint, symbol string, baseCurrency string, quantityChange, price, fee float64) error {
 	var position models.Position
-	err := tx.Where("user_id = ? AND symbol = ? AND base_currency = ?", userID, symbol, baseCurrency).First(&position).Error
+	err := tx.Where("user_id = ? AND symbol = ? AND base_currency = ? AND simulation_id = ?", userID, symbol, baseCurrency, simulationID).First(&position).Error
 
 	if err == gorm.ErrRecordNotFound {
 		// Create new position
 		position = models.Position{
 			UserID:       userID,
+			SimulationID: simulationID,
 			Symbol:       symbol,
 			BaseCurrency: baseCurrency,
 			Quantity:     quantityChange,
@@ -340,9 +327,9 @@ func (os *OrderService) broadcastOrderUpdate(eventType string, order *models.Ord
 }
 
 // GetUserOrders gets all orders for a user
-func (os *OrderService) GetUserOrders(userID uint, limit int) ([]models.Order, error) {
+func (os *OrderService) GetUserOrders(userID uint, simulationID uint, limit int) ([]models.Order, error) {
 	var orders []models.Order
-	query := os.db.Where("user_id = ?", userID).Order("created_at DESC")
+	query := os.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID).Order("created_at DESC")
 
 	if limit > 0 {
 		query = query.Limit(limit)
@@ -356,9 +343,9 @@ func (os *OrderService) GetUserOrders(userID uint, limit int) ([]models.Order, e
 }
 
 // GetUserTrades gets all trades for a user
-func (os *OrderService) GetUserTrades(userID uint, limit int) ([]models.Trade, error) {
+func (os *OrderService) GetUserTrades(userID uint, simulationID uint, limit int) ([]models.Trade, error) {
 	var trades []models.Trade
-	query := os.db.Where("user_id = ?", userID).Order("executed_at DESC")
+	query := os.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID).Order("executed_at DESC")
 
 	if limit > 0 {
 		query = query.Limit(limit)
