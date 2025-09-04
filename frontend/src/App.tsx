@@ -6,6 +6,7 @@ import SymbolSelector from './components/SymbolSelector';
 import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/TimeframeSelector';
 import OrderPanel from './components/OrderPanel';
 import Portfolio from './components/Portfolio';
+import TradingTabs from './components/TradingTabs';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { ConnectionState } from './hooks/useWebSocket';
 // Removed SimulationApiService import - now using WebSocket
@@ -434,14 +435,27 @@ function AppContent() {
               simulationState={simulationState.state}
             />
 
-            {/* Portfolio */}
+            {/* Portfolio Summary */}
             <Portfolio
               connectionState={connectionState}
               currentPrice={simulationState.lastCandle?.close || 0}
               symbol={symbol}
               simulationState={simulationState.state}
+              initialFunding={initialFunding}
             />
           </div>
+        </div>
+
+        {/* Trading Tabs Section - Under Chart */}
+        <div style={{
+          marginBottom: '20px'
+        }}>
+          <TradingTabs
+            connectionState={connectionState}
+            currentPrice={simulationState.lastCandle?.close || 0}
+            symbol={symbol}
+            simulationState={simulationState.state}
+          />
         </div>
       </div>
     </div>

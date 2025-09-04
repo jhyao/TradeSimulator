@@ -126,19 +126,19 @@ func (oh *OrderHandler) GetTrades(c *gin.Context) {
 	})
 }
 
-// GetPortfolio handles HTTP requests to get user portfolio
-func (oh *OrderHandler) GetPortfolio(c *gin.Context) {
+// GetPositions handles HTTP requests to get user positions
+func (oh *OrderHandler) GetPositions(c *gin.Context) {
 	// For now, use default user ID 1
 	userID := uint(1)
 
-	portfolio, err := oh.portfolioService.GetUserPortfolio(userID)
+	positions, err := oh.portfolioService.GetUserPositions(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"portfolio": portfolio,
+		"positions": positions,
 	})
 }
 

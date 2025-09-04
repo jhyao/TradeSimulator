@@ -167,6 +167,25 @@ func (ps *PortfolioService) getUserPositions(userID uint) ([]models.Position, er
 	return positions, nil
 }
 
+// GetUserPositions gets all positions for a user (public method for API)
+func (ps *PortfolioService) GetUserPositions(userID uint) ([]models.Position, error) {
+	positions, err := ps.getUserPositions(userID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// If no positions exist, create initial USDT position
+	if len(positions) == 0 {
+		if err := ps.createInitialUSDTPosition(userID); err != nil {
+			return nil, fmt.Errorf("failed to create initial USDT position: %w", err)
+		}
+		// Retry getting positions
+		return ps.getUserPositions(userID)
+	}
+	
+	return positions, nil
+}
+
 // getSimulationSymbol gets the current simulation symbol
 func (ps *PortfolioService) getSimulationSymbol() string {
 	status := ps.simulationEngine.GetStatus()

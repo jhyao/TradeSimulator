@@ -123,10 +123,10 @@ func main() {
 			trades.GET("/", orderHandler.GetTrades)
 		}
 
-		portfolio := api.Group("/portfolio")
+		positions := api.Group("/positions")
 		{
-			portfolio.GET("/", orderHandler.GetPortfolio)
-			portfolio.POST("/reset", orderHandler.ResetPortfolio)
+			positions.GET("/", orderHandler.GetPositions)
+			positions.POST("/reset", orderHandler.ResetPortfolio)
 		}
 	}
 

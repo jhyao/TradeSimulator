@@ -86,3 +86,13 @@ Update1: model refactor
 3. Trade table executed_at should use simulation time
 4. Order table and Trade table add a cloumn for base currency, for ETHUSDT, base is USDT, it's unit of price
 5. Merge position and portfolio to one, because USDT and ETH are all positions, add base currency column, for USDT position, base is USDT, price is 1
+
+
+Update2: pnl update in frontend
+1. change backend portfolio apis to position apis
+2. move pnl calculation from backend to frontend, backend return holding quantity and average price, front end show pnl on price update.
+
+Update3: simulation record
+1. Add simulation table, record fixed simulation params (symbol, start simulation time, end simulation time, start time, end time, initial funding, mode(spot/future), not include variable params (speed, timeframe), reserve an extra column for other configs (json format), status, total value.
+2. Create a new simulation record when start simulation, update status when pause/resume/stop.
+3. Add simulation id in order, trade, position tables to bind these records with simulation batches.

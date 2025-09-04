@@ -1,65 +1,106 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
-import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
+import { formatCurrency, formatPercentage } from '../utils/numberFormat';
 
 interface PortfolioProps {
   connectionState: ConnectionState;
   currentPrice: number;
   symbol: string;
   simulationState: 'stopped' | 'playing' | 'paused';
+  initialFunding: number;
 }
 
 interface Position {
-  position: {
-    id: number;
-    user_id: number;
-    symbol: string;
-    base_currency: string;
-    quantity: number;
-    average_price: number;
-    total_cost: number;
-    updated_at: string;
-    created_at: string;
-  };
+  id: number;
+  user_id: number;
+  symbol: string;
+  base_currency: string;
+  quantity: number;
+  average_price: number;
+  total_cost: number;
+  updated_at: string;
+  created_at: string;
+}
+
+interface CalculatedPosition {
+  position: Position;
   currentPrice: number;
   marketValue: number;
   unrealizedPnL: number;
   totalReturn: number;
 }
 
-interface PortfolioData {
-  id: number;
-  user_id: number;
-  cash_balance: number;
-  total_value: number;
-  updated_at: string;
-  created_at: string;
-}
-
 interface PortfolioSummary {
-  portfolio: PortfolioData;
-  positions: Position[];
+  positions: CalculatedPosition[];
   totalValue: number;
   totalPnL: number;
+  cashBalance: number;
 }
 
 const Portfolio: React.FC<PortfolioProps> = ({ 
   connectionState, 
   currentPrice, 
   symbol,
-  simulationState 
+  simulationState,
+  initialFunding
 }) => {
   const [portfolioData, setPortfolioData] = useState<PortfolioSummary | null>(null);
+  const [rawPositions, setRawPositions] = useState<Position[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  const calculatePortfolio = useCallback((positions: Position[], marketPrice: number, currentSymbol: string): PortfolioSummary => {
+    const calculatedPositions: CalculatedPosition[] = [];
+    let totalValue = 0;
+    let cashBalance = 0;
+
+    positions.forEach(position => {
+      let positionPrice: number;
+      
+      if (position.symbol === 'USDT') {
+        positionPrice = 1.0;
+        cashBalance = position.quantity;
+      } else if (position.symbol === currentSymbol) {
+        positionPrice = marketPrice;
+      } else {
+        positionPrice = position.average_price;
+      }
+
+      const marketValue = position.quantity * positionPrice;
+      const unrealizedPnL = marketValue - position.total_cost;
+      const totalReturn = position.total_cost !== 0 ? (unrealizedPnL / position.total_cost) * 100 : 0;
+
+      const calculatedPosition: CalculatedPosition = {
+        position,
+        currentPrice: positionPrice,
+        marketValue,
+        unrealizedPnL,
+        totalReturn
+      };
+
+      calculatedPositions.push(calculatedPosition);
+      totalValue += marketValue;
+    });
+
+    // Calculate total P&L based on initial funding
+    const totalPnL = totalValue - initialFunding;
+
+    return {
+      positions: calculatedPositions,
+      totalValue,
+      totalPnL,
+      cashBalance
+    };
+  }, [initialFunding]);
+
 
   const fetchPortfolio = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch('/api/v1/portfolio/', {
+      const response = await fetch('/api/v1/positions/', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -71,16 +112,17 @@ const Portfolio: React.FC<PortfolioProps> = ({
       }
 
       const data = await response.json();
-      setPortfolioData(data.portfolio);
+      setRawPositions(data.positions);
+      setPortfolioData(calculatePortfolio(data.positions, currentPrice, symbol));
       setLastRefresh(new Date());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to load portfolio: ${errorMessage}`);
-      console.error('Error fetching portfolio:', err);
+      setError(`Failed to load positions: ${errorMessage}`);
+      console.error('Error fetching positions:', err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentPrice, symbol, calculatePortfolio]);
 
   const resetPortfolio = useCallback(async () => {
     if (!window.confirm('Are you sure you want to reset your portfolio? This will clear all positions and reset your balance to $10,000.')) {
@@ -91,7 +133,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
     setError(null);
 
     try {
-      const response = await fetch('/api/v1/portfolio/reset', {
+      const response = await fetch('/api/v1/positions/reset', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -113,6 +155,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
     }
   }, [fetchPortfolio]);
 
+
   // Auto-refresh portfolio data
   useEffect(() => {
     if (connectionState === ConnectionState.CONNECTED) {
@@ -128,6 +171,13 @@ const Portfolio: React.FC<PortfolioProps> = ({
       };
     }
   }, [connectionState, simulationState, fetchPortfolio]);
+
+  // Recalculate portfolio when current price changes
+  useEffect(() => {
+    if (rawPositions && currentPrice > 0) {
+      setPortfolioData(calculatePortfolio(rawPositions, currentPrice, symbol));
+    }
+  }, [rawPositions, currentPrice, symbol, calculatePortfolio]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
@@ -167,7 +217,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
           fontSize: '18px',
           color: '#333'
         }}>
-          Portfolio
+          Portfolio Summary
         </h3>
         <div>
           <button
@@ -234,7 +284,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
                 Cash Balance
               </div>
               <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCurrency(portfolioData.portfolio.cash_balance)}
+                {formatCurrency(portfolioData.cashBalance)}
               </div>
             </div>
             
@@ -269,81 +319,11 @@ const Portfolio: React.FC<PortfolioProps> = ({
                 fontWeight: 'bold',
                 color: portfolioData.totalPnL >= 0 ? '#28a745' : '#dc3545'
               }}>
-                {formatPercent((portfolioData.totalPnL / 10000) * 100)}
+                {formatPercent((portfolioData.totalPnL / initialFunding) * 100)}
               </div>
             </div>
           </div>
 
-          {/* Positions */}
-          <div>
-            <h4 style={{ fontSize: '14px', margin: '0 0 10px 0', color: '#495057' }}>
-              Positions
-            </h4>
-            
-            {(() => {
-              // Filter out USDT positions since they're shown as cash balance
-              const tradingPositions = portfolioData.positions?.filter(pos => pos.position.symbol !== 'USDT') || [];
-              
-              return !tradingPositions || tradingPositions.length === 0 ? (
-                <div style={{
-                  textAlign: 'center',
-                  padding: '20px',
-                  color: '#6c757d',
-                  fontSize: '14px',
-                  fontStyle: 'italic'
-                }}>
-                  No positions
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {tradingPositions.map((pos, index) => (
-                  <div
-                    key={index}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr auto auto auto',
-                      gap: '10px',
-                      alignItems: 'center',
-                      padding: '10px',
-                      border: '1px solid #dee2e6',
-                      borderRadius: '6px',
-                      fontSize: '13px'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 'bold' }}>{pos.position.symbol}</div>
-                      <div style={{ color: '#6c757d' }}>
-                        {formatQuantity(pos.position.quantity)} @ {formatCurrency(pos.position.average_price)}
-                      </div>
-                    </div>
-                    
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '12px', color: '#6c757d' }}>Market Value</div>
-                      <div>{formatCurrency(pos.marketValue)}</div>
-                    </div>
-                    
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '12px', color: '#6c757d' }}>P&L</div>
-                      <div style={{ color: pos.unrealizedPnL >= 0 ? '#28a745' : '#dc3545' }}>
-                        {pos.unrealizedPnL >= 0 ? '+' : ''}{formatCurrency(pos.unrealizedPnL)}
-                      </div>
-                    </div>
-                    
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '12px', color: '#6c757d' }}>Return</div>
-                      <div style={{ 
-                        color: pos.totalReturn >= 0 ? '#28a745' : '#dc3545',
-                        fontWeight: 'bold'
-                      }}>
-                        {formatPercent(pos.totalReturn)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              );
-            })()}
-          </div>
 
           {lastRefresh && (
             <div style={{
