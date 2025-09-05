@@ -7,8 +7,6 @@ import (
 	"tradesimulator/internal/dao/simulation"
 	"tradesimulator/internal/dao/trading"
 	"tradesimulator/internal/database"
-	simulationEngine "tradesimulator/internal/engines/simulation"
-	tradingEngine "tradesimulator/internal/engines/trading"
 	"tradesimulator/internal/handlers"
 	wsHandlers "tradesimulator/internal/handlers/websocket"
 	"tradesimulator/internal/integrations/binance"
@@ -85,27 +83,16 @@ func main() {
 
 	// Initialize portfolio service
 	portfolioService := services.NewPortfolioService()
-	
-	// Initialize WebSocket handler with dependencies (engines will be created per-client)
-	wsHandler := wsHandlers.NewWebSocketHandler(binanceClient, portfolioService, simulationDAO, orderDAO, tradeDAO, positionDAO)
 
 	// Initialize order service (for REST API endpoints) 
-	// Create a simple order execution engine for REST API usage
-	restOrderExecutionEngine := tradingEngine.NewOrderExecutionEngine(orderDAO, tradeDAO, positionDAO, nil, database.GetDB())
-	orderService := services.NewOrderService(orderDAO, tradeDAO, restOrderExecutionEngine)
-
-	// Initialize event handlers (no longer need global engines)
-	simulationEventHandler := wsHandlers.NewSimulationEventHandler()
-	orderEventHandler := wsHandlers.NewOrderEventHandler(orderService, portfolioService)
+	orderService := services.NewOrderService(orderDAO, tradeDAO)
 	
-	// Set handlers on WebSocket handler for message processing
-	wsHandler.SetHandlers(simulationEventHandler, orderEventHandler)
+	// Initialize WebSocket handler with dependencies (handlers will be created internally)
+	wsHandler := wsHandlers.NewWebSocketHandler(binanceClient, portfolioService, simulationDAO, orderDAO, tradeDAO, positionDAO, orderService)
 
-	// Initialize REST API handlers (will use their own engines if needed)
-	// Create simple engines for REST API usage
-	restSimulationEngine := simulationEngine.NewSimulationEngine(nil, binanceClient, portfolioService, simulationDAO)
-	simulationHandler := handlers.NewSimulationHandler(restSimulationEngine, simulationDAO)
-	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, restSimulationEngine)
+	// Initialize REST API handlers
+	simulationHandler := handlers.NewSimulationHandler(simulationDAO)
+	orderHandler := handlers.NewOrderHandler(orderService, portfolioService)
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)

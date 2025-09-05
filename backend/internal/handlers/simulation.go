@@ -5,34 +5,20 @@ import (
 	"strconv"
 
 	"tradesimulator/internal/dao/simulation"
-	simulationEngine "tradesimulator/internal/engines/simulation"
 
 	"github.com/gin-gonic/gin"
 )
 
 type SimulationHandler struct {
-	engine        *simulationEngine.SimulationEngine
 	simulationDAO simulation.SimulationDAOInterface
 }
 
-func NewSimulationHandler(engine *simulationEngine.SimulationEngine, simulationDAO simulation.SimulationDAOInterface) *SimulationHandler {
+func NewSimulationHandler(simulationDAO simulation.SimulationDAOInterface) *SimulationHandler {
 	return &SimulationHandler{
-		engine:        engine,
 		simulationDAO: simulationDAO,
 	}
 }
 
-// GetStatus handles GET /api/v1/simulation/status
-// @Summary Get Current Simulation Status
-// @Description Get the current status of the running simulation engine
-// @Tags simulation
-// @Produce json
-// @Success 200 {object} map[string]interface{} "Current simulation status"
-// @Router /simulation/status [get]
-func (sh *SimulationHandler) GetStatus(c *gin.Context) {
-	status := sh.engine.GetStatus()
-	c.JSON(http.StatusOK, status)
-}
 
 // GetSimulations handles GET /api/v1/simulations
 // @Summary Get User Simulations
@@ -160,12 +146,6 @@ func (sh *SimulationHandler) DeleteSimulation(c *gin.Context) {
 
 // RegisterSimulationRoutes registers simulation routes
 func RegisterSimulationRoutes(router *gin.RouterGroup, handler *SimulationHandler) {
-	// Current simulation status
-	simulation := router.Group("/simulation")
-	{
-		simulation.GET("/status", handler.GetStatus)
-	}
-
 	// Historical simulations
 	simulations := router.Group("/simulations")
 	{

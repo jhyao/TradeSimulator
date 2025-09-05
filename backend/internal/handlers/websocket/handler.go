@@ -29,27 +29,28 @@ type WebSocketHandler struct {
 	positionDAO      tradingDAO.PositionDAOInterface
 }
 
-// NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simulationDAO simulationDAO.SimulationDAOInterface, orderDAO tradingDAO.OrderDAOInterface, tradeDAO tradingDAO.TradeDAOInterface, positionDAO tradingDAO.PositionDAOInterface) *WebSocketHandler {
+// NewWebSocketHandler creates a new WebSocket handler with initialized event handlers
+func NewWebSocketHandler(binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simulationDAO simulationDAO.SimulationDAOInterface, orderDAO tradingDAO.OrderDAOInterface, tradeDAO tradingDAO.TradeDAOInterface, positionDAO tradingDAO.PositionDAOInterface, orderService *services.OrderService) *WebSocketHandler {
 	hub := NewHub()
 	go hub.Run()
 	
+	// Initialize event handlers
+	simulationHandler := NewSimulationEventHandler()
+	orderHandler := NewOrderEventHandler(orderService, portfolioService)
+	
 	return &WebSocketHandler{
-		hub:              hub,
-		binanceService:   binanceService,
-		portfolioService: portfolioService,
-		simulationDAO:    simulationDAO,
-		orderDAO:         orderDAO,
-		tradeDAO:         tradeDAO,
-		positionDAO:      positionDAO,
+		hub:               hub,
+		simulationHandler: simulationHandler,
+		orderHandler:      orderHandler,
+		binanceService:    binanceService,
+		portfolioService:  portfolioService,
+		simulationDAO:     simulationDAO,
+		orderDAO:          orderDAO,
+		tradeDAO:          tradeDAO,
+		positionDAO:       positionDAO,
 	}
 }
 
-// SetHandlers sets the event handlers for simulation and order events
-func (wh *WebSocketHandler) SetHandlers(simulationHandler SimulationEventHandler, orderHandler OrderEventHandler) {
-	wh.simulationHandler = simulationHandler
-	wh.orderHandler = orderHandler
-}
 
 // HandleWebSocket upgrades HTTP connection to WebSocket and manages client
 func (wh *WebSocketHandler) HandleWebSocket(c *gin.Context) {

@@ -1,4 +1,4 @@
-package websocket
+package types
 
 // MessageType defines the type of WebSocket message
 type MessageType string
@@ -7,6 +7,7 @@ const (
 	PriceUpdate      MessageType = "price_update"
 	ConnectionStatus MessageType = "connection_status"
 	StatusUpdate     MessageType = "status_update"
+	SimulationUpdate MessageType = "simulation_update"
 	Error           MessageType = "error"
 	// Simulation control messages
 	SimulationStart     MessageType = "simulation_control_start"
@@ -19,6 +20,8 @@ const (
 	// Order control messages
 	OrderPlace          MessageType = "order_place"
 	OrderCancel         MessageType = "order_cancel"
+	OrderPlaced         MessageType = "order_placed"
+	OrderExecuted       MessageType = "order_executed"
 )
 
 // WebSocketMessage represents a WebSocket message

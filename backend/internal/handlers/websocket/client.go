@@ -5,9 +5,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gorilla/websocket"
 	simulationEngine "tradesimulator/internal/engines/simulation"
 	"tradesimulator/internal/engines/trading"
+	"tradesimulator/internal/types"
+
+	"github.com/gorilla/websocket"
 )
 
 // WebSocket upgrader with CORS settings
@@ -28,7 +30,7 @@ type Client struct {
 	ID                string
 	SimulationHandler SimulationEventHandler
 	OrderHandler      OrderEventHandler
-	
+
 	// Session-specific engines
 	SimulationEngine *simulationEngine.SimulationEngine
 	OrderEngine      trading.OrderExecutionEngineInterface
@@ -36,12 +38,12 @@ type Client struct {
 
 // SimulationEventHandler interface for handling simulation events
 type SimulationEventHandler interface {
-	HandleMessage(client *Client, message WebSocketMessage) error
+	HandleMessage(client *Client, message types.WebSocketMessage) error
 }
 
-// OrderEventHandler interface for handling order events  
+// OrderEventHandler interface for handling order events
 type OrderEventHandler interface {
-	HandleMessage(client *Client, message WebSocketMessage) error
+	HandleMessage(client *Client, message types.WebSocketMessage) error
 }
 
 // NewClient creates a new WebSocket client with its own engine instances
@@ -65,13 +67,13 @@ func (c *Client) readPump() {
 		c.Hub.UnregisterClient(c)
 		c.Conn.Close()
 	}()
-	
+
 	// Set read deadline and pong handler for keep-alive
 	c.Conn.SetReadLimit(512)
 	c.Conn.SetPongHandler(func(string) error {
 		return nil
 	})
-	
+
 	for {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
@@ -80,7 +82,7 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		
+
 		// Handle incoming messages
 		log.Printf("Received message from client %s: %s", c.ID, string(message))
 		c.handleMessage(message)
@@ -90,7 +92,7 @@ func (c *Client) readPump() {
 // writePump handles writing messages to the WebSocket connection
 func (c *Client) writePump() {
 	defer c.Conn.Close()
-	
+
 	for message := range c.Send {
 		if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
 			log.Printf("WebSocket write error for client %s: %v", c.ID, err)
@@ -108,7 +110,7 @@ func (c *Client) Start() {
 
 // handleMessage routes messages to appropriate handlers based on message type
 func (c *Client) handleMessage(messageBytes []byte) {
-	var message WebSocketMessage
+	var message types.WebSocketMessage
 	if err := json.Unmarshal(messageBytes, &message); err != nil {
 		log.Printf("Error parsing message from client %s: %v", c.ID, err)
 		c.SendError("Invalid message format", err.Error())
@@ -117,8 +119,8 @@ func (c *Client) handleMessage(messageBytes []byte) {
 
 	// Route message based on type
 	switch message.Type {
-	case SimulationStart, SimulationStop, SimulationPause, SimulationResume, 
-		 SimulationSetSpeed, SimulationSetTimeframe, SimulationGetStatus:
+	case types.SimulationStart, types.SimulationStop, types.SimulationPause, types.SimulationResume,
+		types.SimulationSetSpeed, types.SimulationSetTimeframe, types.SimulationGetStatus:
 		if c.SimulationHandler != nil {
 			if err := c.SimulationHandler.HandleMessage(c, message); err != nil {
 				log.Printf("Simulation handler error for client %s: %v", c.ID, err)
@@ -127,7 +129,7 @@ func (c *Client) handleMessage(messageBytes []byte) {
 			c.SendError("Simulation handler not available", "Internal error")
 		}
 
-	case OrderPlace, OrderCancel:
+	case types.OrderPlace, types.OrderCancel:
 		if c.OrderHandler != nil {
 			if err := c.OrderHandler.HandleMessage(c, message); err != nil {
 				log.Printf("Order handler error for client %s: %v", c.ID, err)
@@ -150,8 +152,8 @@ func (c *Client) SendError(message, errorMsg string) {
 		"error":   errorMsg,
 	}
 
-	responseMessage := WebSocketMessage{
-		Type: Error,
+	responseMessage := types.WebSocketMessage{
+		Type: types.Error,
 		Data: response,
 	}
 
@@ -159,7 +161,7 @@ func (c *Client) SendError(message, errorMsg string) {
 }
 
 // SendMessage sends a WebSocket message to the client
-func (c *Client) SendMessage(message WebSocketMessage) {
+func (c *Client) SendMessage(message types.WebSocketMessage) {
 	data, err := json.Marshal(message)
 	if err != nil {
 		log.Printf("Error marshaling message for client %s: %v", c.ID, err)
@@ -176,7 +178,7 @@ func (c *Client) SendMessage(message WebSocketMessage) {
 // cleanup handles cleanup of session-specific engines when client disconnects
 func (c *Client) cleanup() {
 	log.Printf("Cleaning up engines for client %s", c.ID)
-	
+
 	// Stop and cleanup simulation engine
 	if c.SimulationEngine != nil {
 		if err := c.SimulationEngine.Stop(); err != nil {
@@ -186,10 +188,10 @@ func (c *Client) cleanup() {
 		c.SimulationEngine = nil
 		log.Printf("Simulation engine cleaned up for client %s", c.ID)
 	}
-	
+
 	// Order execution engine doesn't need cleanup as it's stateless
 	c.OrderEngine = nil
-	
+
 	log.Printf("Engine cleanup completed for client %s", c.ID)
 }
 
@@ -199,12 +201,17 @@ type ClientMessageAdapter struct {
 }
 
 // SendMessage implements ClientMessageSender interface
-func (cma *ClientMessageAdapter) SendMessage(messageType string, data interface{}) {
-	message := WebSocketMessage{
-		Type: MessageType(messageType),
+func (cma *ClientMessageAdapter) SendMessage(messageType types.MessageType, data interface{}) {
+	message := types.WebSocketMessage{
+		Type: messageType,
 		Data: data,
 	}
 	cma.client.SendMessage(message)
+}
+
+// SendErrorResponse sends a structured error response to the client
+func (cma *ClientMessageAdapter) SendError(message string, errorMsg string) {
+	cma.client.SendError(message, errorMsg)
 }
 
 // NewClientMessageAdapter creates a new adapter for the client

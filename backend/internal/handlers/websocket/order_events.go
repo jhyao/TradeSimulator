@@ -5,12 +5,13 @@ import (
 
 	"tradesimulator/internal/models"
 	"tradesimulator/internal/services"
+	"tradesimulator/internal/types"
 )
 
 // Order control message structures
 type OrderPlaceData struct {
 	Symbol   string  `json:"symbol"`
-	Side     string  `json:"side"`     // "buy" or "sell"
+	Side     string  `json:"side"` // "buy" or "sell"
 	Quantity float64 `json:"quantity"`
 }
 
@@ -37,15 +38,16 @@ func NewOrderEventHandler(orderService *services.OrderService, portfolioService 
 }
 
 // HandleMessage handles order control messages
-func (h *OrderEventHandlerImpl) HandleMessage(client *Client, message WebSocketMessage) error {
+func (h *OrderEventHandlerImpl) HandleMessage(client *Client, message types.WebSocketMessage) error {
 	switch message.Type {
-	case OrderPlace:
-		return h.handlePlaceOrder(client, message.Data)
-	case OrderCancel:
-		return h.handleCancelOrder(client, message.Data)
+	case types.OrderPlace:
+		h.handlePlaceOrder(client, message.Data)
+	case types.OrderCancel:
+		h.handleCancelOrder(client, message.Data)
 	default:
-		return h.sendOrderResponse(client, false, "Unknown order message", nil, "Unknown message type")
+		client.SendError("Unknown order message", "Unknown message type "+string(message.Type))
 	}
+	return nil
 }
 
 // handlePlaceOrder handles order placement requests
@@ -53,7 +55,8 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 	dataBytes, _ := json.Marshal(data)
 	var orderData OrderPlaceData
 	if err := json.Unmarshal(dataBytes, &orderData); err != nil {
-		return h.sendOrderResponse(client, false, "Invalid order data", nil, err.Error())
+		client.SendError("Invalid order data", err.Error())
+		return nil
 	}
 
 	// Convert side string to OrderSide enum
@@ -64,23 +67,27 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 	case "sell":
 		side = "sell"
 	default:
-		return h.sendOrderResponse(client, false, "Invalid order side", nil, "Side must be 'buy' or 'sell'")
+		client.SendError("Invalid order side", "Side must be 'buy' or 'sell'")
+		return nil
 	}
 
 	// Check if simulation is running and get current data
 	status := client.SimulationEngine.GetStatus()
 	if !status.IsRunning {
-		return h.sendOrderResponse(client, false, "Simulation not running", nil, "Cannot place orders when simulation is not running")
+		client.SendError("Simulation not running", "Cannot place orders when simulation is not running")
+		return nil
 	}
 
 	if status.CurrentPrice <= 0 {
-		return h.sendOrderResponse(client, false, "Invalid current price", nil, "Cannot determine current price")
+		client.SendError("Invalid current price", "Cannot determine current price")
+		return nil
 	}
 
 	// Place the order using the client's order execution engine (using default user ID 1 for now)
 	order, trade, err := client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
 	if err != nil {
-		return h.sendOrderResponse(client, false, "Failed to place order", nil, err.Error())
+		client.SendError("Failed to place order", err.Error())
+		return nil
 	}
 
 	responseData := map[string]interface{}{
@@ -90,34 +97,21 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		responseData["trade"] = trade
 	}
 
-	return h.sendOrderResponse(client, true, "Order placed successfully", responseData, "")
+	client.SendMessage(types.WebSocketMessage{
+		Type: types.OrderPlaced,
+		Data: OrderControlResponse{
+			Success: true,
+			Message: "Order placed successfully",
+			Data:    responseData,
+		},
+	})
+
+	return nil
 }
 
-// handleCancelOrder handles order cancellation requests  
+// handleCancelOrder handles order cancellation requests
 func (h *OrderEventHandlerImpl) handleCancelOrder(client *Client, data interface{}) error {
 	// TODO: Implement order cancellation logic when needed
-	return h.sendOrderResponse(client, false, "Order cancellation not implemented", nil, "Feature not yet implemented")
-}
-
-// sendOrderResponse sends an order control response back to the client
-func (h *OrderEventHandlerImpl) sendOrderResponse(client *Client, success bool, message string, data interface{}, errorMsg string) error {
-	response := OrderControlResponse{
-		Success: success,
-		Message: message,
-		Data:    data,
-		Error:   errorMsg,
-	}
-
-	responseMsgType := "order_control_response"
-	if !success {
-		responseMsgType = "order_control_error"
-	}
-
-	responseMessage := WebSocketMessage{
-		Type: MessageType(responseMsgType),
-		Data: response,
-	}
-
-	client.SendMessage(responseMessage)
+	client.SendError("Order cancellation not implemented", "Feature not yet implemented")
 	return nil
 }

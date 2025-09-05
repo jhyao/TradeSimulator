@@ -6,13 +6,15 @@ import (
 
 	"tradesimulator/internal/dao/trading"
 	"tradesimulator/internal/models"
+	"tradesimulator/internal/types"
 
 	"gorm.io/gorm"
 )
 
 // ClientMessageSender interface for sending messages to a specific client
 type ClientMessageSender interface {
-	SendMessage(messageType string, data interface{})
+	SendMessage(messageType types.MessageType, data interface{})
+	SendError(message string, errorDetails string)
 }
 
 const (
@@ -91,7 +93,7 @@ func (oe *OrderExecutionEngine) ExecuteMarketOrder(userID, simulationID uint, sy
 		order.ID, string(side), symbol, quantity, string(models.OrderTypeMarket), currentPrice)
 
 	// Send order placed notification to client
-	oe.sendOrderUpdate("order_placed", order, nil)
+	oe.sendOrderUpdate(types.OrderPlaced, order, nil)
 
 	// Execute order immediately (market order)
 	trade, err := oe.executeOrder(tx, order, currentPrice, simulationTime)
@@ -108,7 +110,7 @@ func (oe *OrderExecutionEngine) ExecuteMarketOrder(userID, simulationID uint, sy
 	log.Printf("Order %d executed successfully, trade %d created", order.ID, trade.ID)
 
 	// Send order executed notification to client
-	oe.sendOrderUpdate("order_executed", order, trade)
+	oe.sendOrderUpdate(types.OrderExecuted, order, trade)
 
 	return order, trade, nil
 }
@@ -250,7 +252,7 @@ func (oe *OrderExecutionEngine) CalculateFee(quantity, price float64) float64 {
 }
 
 // sendOrderUpdate sends order updates to the client via WebSocket
-func (oe *OrderExecutionEngine) sendOrderUpdate(eventType string, order *models.Order, trade *models.Trade) {
+func (oe *OrderExecutionEngine) sendOrderUpdate(eventType types.MessageType, order *models.Order, trade *models.Trade) {
 	if oe.client == nil {
 		return // No client to send to
 	}

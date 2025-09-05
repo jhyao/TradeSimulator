@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"tradesimulator/internal/types"
 )
 
 // Hub maintains active clients and broadcasts messages
@@ -36,9 +37,9 @@ func (h *Hub) Run() {
 			log.Printf("Client %s connected. Total clients: %d", client.ID, len(h.clients))
 			
 			// Send connection status message
-			statusMsg := WebSocketMessage{
-				Type: ConnectionStatus,
-				Data: ConnectionStatusData{
+			statusMsg := types.WebSocketMessage{
+				Type: types.ConnectionStatus,
+				Data: types.ConnectionStatusData{
 					Status:    "connected",
 					Message:   "Successfully connected to WebSocket",
 					Timestamp: GetCurrentTimestamp(),
@@ -80,8 +81,8 @@ func (h *Hub) Run() {
 }
 
 // BroadcastMessage broadcasts a message to all connected clients
-func (h *Hub) BroadcastMessage(msgType MessageType, data interface{}) {
-	message := WebSocketMessage{
+func (h *Hub) BroadcastMessage(msgType types.MessageType, data interface{}) {
+	message := types.WebSocketMessage{
 		Type: msgType,
 		Data: data,
 	}
@@ -97,7 +98,7 @@ func (h *Hub) BroadcastMessage(msgType MessageType, data interface{}) {
 
 // BroadcastMessageString broadcasts a message with string message type (for services)
 func (h *Hub) BroadcastMessageString(msgType string, data interface{}) {
-	h.BroadcastMessage(MessageType(msgType), data)
+	h.BroadcastMessage(types.MessageType(msgType), data)
 }
 
 // GetClientCount returns the number of connected clients

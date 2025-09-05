@@ -12,11 +12,13 @@ import (
 	"tradesimulator/internal/integrations/binance"
 	"tradesimulator/internal/models"
 	"tradesimulator/internal/services"
+	"tradesimulator/internal/types"
 )
 
 // ClientMessageSender interface for sending messages to a specific client
 type ClientMessageSender interface {
-	SendMessage(messageType string, data interface{})
+	SendMessage(messageType types.MessageType, data interface{})
+	SendError(message string, errorMsg string)
 }
 
 type SimulationState string
@@ -82,12 +84,13 @@ type SimulationStatus struct {
 	Interval         string  `json:"interval"`
 	Speed            int     `json:"speed"`
 	Progress         float64 `json:"progress"`
-	StartTime        string  `json:"startTime"`
+	StartTime        int64   `json:"startTime"`
 	CurrentPriceTime int64   `json:"currentPriceTime"`
 	CurrentPrice     float64 `json:"currentPrice"`
 	SimulationID     uint    `json:"simulationID"`
 	IsRunning        bool    `json:"isRunning"`
 	SimulationTime   int64   `json:"simulationTime"`
+	Message          string  `json:"message"`
 }
 
 func NewSimulationEngine(client ClientMessageSender, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface) *SimulationEngine {
@@ -201,7 +204,7 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 		symbol, interval, startTime, len(baseDataset), se.baseInterval, speed)
 
 	// Send initial status update
-	se.sendStatusUpdateUnsafe()
+	se.sendStatusUpdateUnsafe("Simulation started")
 
 	// Start the simulation goroutine
 	go se.runSimulation()
@@ -262,7 +265,7 @@ func (se *SimulationEngine) runSimulation() {
 						se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusCompleted, se.currentSimTime)
 
 						se.state = StateStopped
-						se.sendStateChange("simulation_stop", "Simulation completed - reached end of data")
+						se.sendStatusUpdateUnsafe("Simulation completed - reached end of data")
 						se.mu.Unlock()
 						return
 					}
@@ -276,11 +279,9 @@ func (se *SimulationEngine) runSimulation() {
 			log.Printf("Received speed change from %dx to %dx", se.speed, newSpeed)
 			if err := se.handleSpeedChange(newSpeed); err != nil {
 				log.Printf("Failed to change speed: %v", err)
-				se.sendStateChange("simulation_error", fmt.Sprintf("Failed to change speed: %v", err))
+				se.sendErrorMessage("Failed to change speed: %v", err.Error())
 			} else {
-				se.sendStateChange("simulation_speed_change", fmt.Sprintf("Speed changed to %dx", newSpeed))
-				// Send updated status after speed change (unsafe version since we hold lock)
-				se.sendStatusUpdateUnsafe()
+				se.sendStatusUpdateUnsafe(fmt.Sprintf("Speed changed to %dx", newSpeed))
 			}
 			se.mu.Unlock()
 
@@ -289,11 +290,9 @@ func (se *SimulationEngine) runSimulation() {
 			log.Printf("Received timeframe change from %s to %s", se.interval, newTimeframe)
 			if err := se.handleTimeframeChange(newTimeframe); err != nil {
 				log.Printf("Failed to change timeframe: %v", err)
-				se.sendStateChange("simulation_error", fmt.Sprintf("Failed to change timeframe: %v", err))
+				se.sendErrorMessage("Failed to change timeframe: %v", err.Error())
 			} else {
-				se.sendStateChange("simulation_timeframe_change", fmt.Sprintf("Timeframe changed to %s", newTimeframe))
-				// Send updated status after timeframe change (unsafe version since we hold lock)
-				se.sendStatusUpdateUnsafe()
+				se.sendStatusUpdateUnsafe(fmt.Sprintf("Timeframe changed to %s", newTimeframe))
 			}
 			se.mu.Unlock()
 
@@ -301,10 +300,10 @@ func (se *SimulationEngine) runSimulation() {
 			se.mu.Lock()
 			if dataLoadSuccess {
 				log.Printf("Successfully loaded more historical data")
-				se.sendStateChange("simulation_data_loaded", "Additional historical data loaded")
+				se.sendStatusUpdateUnsafe("Additional historical data loaded")
 			} else {
 				log.Printf("Failed to load more historical data")
-				se.sendStateChange("simulation_error", "Failed to load additional historical data")
+				se.sendErrorMessage("Failed to load additional historical data", "")
 			}
 			se.mu.Unlock()
 
@@ -377,47 +376,67 @@ func (se *SimulationEngine) sendBaseCandle(baseCandle models.OHLCV) {
 		Speed:          se.speed,
 	}
 
-	se.client.SendMessage("simulation_update", updateData)
+	se.client.SendMessage(types.SimulationUpdate, updateData)
 	log.Printf("Sent base candle: %d-%d, SimTime: %d, OHLCV: %.2f/%.2f/%.2f/%.2f/%.2f",
 		baseCandle.StartTime, baseCandle.EndTime, se.currentSimTime,
 		baseCandle.Open, baseCandle.High, baseCandle.Low, baseCandle.Close, baseCandle.Volume)
 }
 
-// broadcastCurrentPrice - removed as it was using unused displayDataset
-
-func (se *SimulationEngine) sendStateChange(messageType, message string) {
-	if se.client == nil {
-		return // No client to send to
-	}
-
-	stateData := map[string]interface{}{
-		"state":   string(se.state),
-		"message": message,
-		"symbol":  se.symbol,
-		"speed":   se.speed,
-	}
-
-	se.client.SendMessage(messageType, stateData)
-}
-
 // SendStatusUpdate gets the current status and sends it to the client (thread-safe)
-func (se *SimulationEngine) SendStatusUpdate() {
+func (se *SimulationEngine) SendStatusUpdate(message string) {
 	if se.client == nil {
 		return // No client to send to
 	}
 
 	status := se.GetStatus() // Use the thread-safe version
-	se.client.SendMessage("StatusUpdate", status)
+	if message != "" {
+		status.Message = message
+	}
+	se.client.SendMessage(types.StatusUpdate, status)
 }
 
 // sendStatusUpdateUnsafe sends status update without acquiring locks (caller must hold lock)
-func (se *SimulationEngine) sendStatusUpdateUnsafe() {
+func (se *SimulationEngine) sendStatusUpdateUnsafe(message string) {
 	if se.client == nil {
 		return // No client to send to
 	}
 
 	status := se.getStatusUnsafe()
-	se.client.SendMessage("StatusUpdate", status)
+	if message != "" {
+		status.Message = message
+	}
+	se.client.SendMessage(types.StatusUpdate, status)
+}
+
+// sendErrorMessage sends an error message with error message type
+func (se *SimulationEngine) sendErrorMessage(message string, errorMessage string) {
+	if se.client == nil {
+		return // No client to send to
+	}
+
+	se.client.SendError(message, errorMessage)
+}
+
+func (se *SimulationEngine) GetStatus() SimulationStatus {
+	se.mu.RLock()
+	defer se.mu.RUnlock()
+
+	// Progress calculation placeholder - will be time-based in future
+	progress := float64(0)
+
+	return SimulationStatus{
+		State:            string(se.state),
+		Symbol:           se.symbol,
+		Interval:         se.interval,
+		Speed:            se.speed,
+		Progress:         progress,
+		StartTime:        se.startTime,
+		CurrentPriceTime: se.currentPriceTime,
+		CurrentPrice:     se.currentPrice,
+		SimulationID:     se.currentSimulationID,
+		IsRunning:        se.state == StatePlaying || se.state == StatePaused,
+		SimulationTime:   se.currentSimTime,
+	}
 }
 
 // getStatusUnsafe returns status without acquiring locks (caller must hold lock)
@@ -431,7 +450,7 @@ func (se *SimulationEngine) getStatusUnsafe() SimulationStatus {
 		Interval:         se.interval,
 		Speed:            se.speed,
 		Progress:         progress,
-		StartTime:        fmt.Sprintf("%d", se.startTime),
+		StartTime:        se.startTime,
 		CurrentPriceTime: se.currentPriceTime,
 		CurrentPrice:     se.currentPrice,
 		SimulationID:     se.currentSimulationID,
@@ -534,10 +553,7 @@ func (se *SimulationEngine) Pause() error {
 	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusPaused, se.currentSimTime)
 
 	log.Printf("Simulation paused at index %d", se.currentIndex)
-	se.sendStateChange("simulation_pause", "Simulation paused")
-
-	// Send updated status (unsafe version since we hold lock)
-	se.sendStatusUpdateUnsafe()
+	se.sendStatusUpdateUnsafe("Simulation paused")
 	return nil
 }
 
@@ -555,10 +571,7 @@ func (se *SimulationEngine) Resume() error {
 	se.updateSimulationStatus(models.SimulationStatusRunning)
 
 	log.Printf("Simulation resumed at index %d", se.currentIndex)
-	se.sendStateChange("simulation_resume", "Simulation resumed")
-
-	// Send updated status (unsafe version since we hold lock)
-	se.sendStatusUpdateUnsafe()
+	se.sendStatusUpdateUnsafe("Simulation resumed")
 	return nil
 }
 
@@ -589,10 +602,7 @@ func (se *SimulationEngine) Stop() error {
 	}
 
 	log.Printf("Simulation stopped and reset")
-	se.sendStateChange("simulation_stop", "Simulation stopped")
-
-	// Send updated status (unsafe version since we hold lock)
-	se.sendStatusUpdateUnsafe()
+	se.sendStatusUpdateUnsafe("Simulation stopped")
 	return nil
 }
 
@@ -623,7 +633,7 @@ func (se *SimulationEngine) SetSpeed(speed int) error {
 		log.Printf("Speed updated directly to %dx (simulation not running)", speed)
 
 		// Send updated status for direct updates
-		se.sendStatusUpdateUnsafe()
+		se.sendStatusUpdateUnsafe(fmt.Sprintf("Speed updated to %dx", speed))
 		return nil
 	}
 
@@ -665,7 +675,7 @@ func (se *SimulationEngine) SetTimeframe(newTimeframe string) error {
 		log.Printf("Timeframe updated directly to %s (simulation not running)", newTimeframe)
 
 		// Send updated status for direct updates
-		se.sendStatusUpdateUnsafe()
+		se.sendStatusUpdateUnsafe(fmt.Sprintf("Timeframe updated to %s", newTimeframe))
 		return nil
 	}
 
@@ -761,28 +771,6 @@ func (se *SimulationEngine) handleTimeframeChange(newTimeframe string) error {
 
 	log.Printf("Timeframe change completed: %s -> %s (base: %s unchanged)", oldInterval, newTimeframe, se.baseInterval)
 	return nil
-}
-
-func (se *SimulationEngine) GetStatus() SimulationStatus {
-	se.mu.RLock()
-	defer se.mu.RUnlock()
-
-	// Progress calculation placeholder - will be time-based in future
-	progress := float64(0)
-
-	return SimulationStatus{
-		State:            string(se.state),
-		Symbol:           se.symbol,
-		Interval:         se.interval,
-		Speed:            se.speed,
-		Progress:         progress,
-		StartTime:        fmt.Sprintf("%d", se.startTime),
-		CurrentPriceTime: se.currentPriceTime,
-		CurrentPrice:     se.currentPrice,
-		SimulationID:     se.currentSimulationID,
-		IsRunning:        se.state == StatePlaying || se.state == StatePaused,
-		SimulationTime:   se.currentSimTime,
-	}
 }
 
 func (se *SimulationEngine) Cleanup() {

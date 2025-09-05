@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"tradesimulator/internal/types"
 )
 
 // Simulation control message structures
@@ -39,24 +40,25 @@ func NewSimulationEventHandler() *SimulationEventHandlerImpl {
 }
 
 // HandleMessage handles simulation control messages
-func (h *SimulationEventHandlerImpl) HandleMessage(client *Client, message WebSocketMessage) error {
+func (h *SimulationEventHandlerImpl) HandleMessage(client *Client, message types.WebSocketMessage) error {
 	switch message.Type {
-	case SimulationStart:
+	case types.SimulationStart:
 		return h.handleStart(client, message.Data)
-	case SimulationStop:
+	case types.SimulationStop:
 		return h.handleStop(client)
-	case SimulationPause:
+	case types.SimulationPause:
 		return h.handlePause(client)
-	case SimulationResume:
+	case types.SimulationResume:
 		return h.handleResume(client)
-	case SimulationSetSpeed:
+	case types.SimulationSetSpeed:
 		return h.handleSetSpeed(client, message.Data)
-	case SimulationSetTimeframe:
+	case types.SimulationSetTimeframe:
 		return h.handleSetTimeframe(client, message.Data)
-	case SimulationGetStatus:
+	case types.SimulationGetStatus:
 		return h.handleGetStatus(client)
 	default:
-		return h.sendErrorResponse(client, "Unknown simulation message", "Unknown message type")
+		client.SendError("Unknown simulation message", "Unknown message type " + string(message.Type))
+		return nil
 	}
 }
 
@@ -65,16 +67,19 @@ func (h *SimulationEventHandlerImpl) handleStart(client *Client, data interface{
 	dataBytes, _ := json.Marshal(data)
 	var startData SimulationStartData
 	if err := json.Unmarshal(dataBytes, &startData); err != nil {
-		return h.sendErrorResponse(client, "Invalid start simulation data", err.Error())
+		client.SendError("Invalid start simulation data", err.Error())
+		return nil
 	}
 
 	// Validate initial funding
 	if startData.InitialFunding <= 0 {
-		return h.sendErrorResponse(client, "Invalid initial funding", "Initial funding must be greater than 0")
+		client.SendError("Invalid initial funding", "Initial funding must be greater than 0")
+		return nil
 	}
 
 	if err := client.SimulationEngine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding); err != nil {
-		return h.sendErrorResponse(client, "Failed to start simulation", err.Error())
+		client.SendError("Failed to start simulation", err.Error())
+		return nil
 	}
 
 	return nil
@@ -83,7 +88,8 @@ func (h *SimulationEventHandlerImpl) handleStart(client *Client, data interface{
 // handleStop handles simulation stop requests
 func (h *SimulationEventHandlerImpl) handleStop(client *Client) error {
 	if err := client.SimulationEngine.Stop(); err != nil {
-		return h.sendErrorResponse(client, "Failed to stop simulation", err.Error())
+		client.SendError("Failed to stop simulation", err.Error())
+		return nil
 	}
 
 	return nil
@@ -92,7 +98,8 @@ func (h *SimulationEventHandlerImpl) handleStop(client *Client) error {
 // handlePause handles simulation pause requests
 func (h *SimulationEventHandlerImpl) handlePause(client *Client) error {
 	if err := client.SimulationEngine.Pause(); err != nil {
-		return h.sendErrorResponse(client, "Failed to pause simulation", err.Error())
+		client.SendError("Failed to pause simulation", err.Error())
+		return nil
 	}
 
 	return nil
@@ -101,7 +108,8 @@ func (h *SimulationEventHandlerImpl) handlePause(client *Client) error {
 // handleResume handles simulation resume requests
 func (h *SimulationEventHandlerImpl) handleResume(client *Client) error {
 	if err := client.SimulationEngine.Resume(); err != nil {
-		return h.sendErrorResponse(client, "Failed to resume simulation", err.Error())
+		client.SendError("Failed to resume simulation", err.Error())
+		return nil
 	}
 
 	return nil
@@ -112,11 +120,13 @@ func (h *SimulationEventHandlerImpl) handleSetSpeed(client *Client, data interfa
 	dataBytes, _ := json.Marshal(data)
 	var speedData SimulationSetSpeedData
 	if err := json.Unmarshal(dataBytes, &speedData); err != nil {
-		return h.sendErrorResponse(client, "Invalid speed data", err.Error())
+		client.SendError("Invalid speed data", err.Error())
+		return nil
 	}
 
 	if err := client.SimulationEngine.SetSpeed(speedData.Speed); err != nil {
-		return h.sendErrorResponse(client, "Failed to set speed", err.Error())
+		client.SendError("Failed to set speed", err.Error())
+		return nil
 	}
 
 	return nil
@@ -127,11 +137,13 @@ func (h *SimulationEventHandlerImpl) handleSetTimeframe(client *Client, data int
 	dataBytes, _ := json.Marshal(data)
 	var timeframeData SimulationSetTimeframeData
 	if err := json.Unmarshal(dataBytes, &timeframeData); err != nil {
-		return h.sendErrorResponse(client, "Invalid timeframe data", err.Error())
+		client.SendError("Invalid timeframe data", err.Error())
+		return nil
 	}
 
 	if err := client.SimulationEngine.SetTimeframe(timeframeData.Timeframe); err != nil {
-		return h.sendErrorResponse(client, "Failed to set timeframe", err.Error())
+		client.SendError("Failed to set timeframe", err.Error())
+		return nil
 	}
 
 	return nil
@@ -140,25 +152,7 @@ func (h *SimulationEventHandlerImpl) handleSetTimeframe(client *Client, data int
 // handleGetStatus handles simulation status requests
 func (h *SimulationEventHandlerImpl) handleGetStatus(client *Client) error {
 	// Explicitly send status update on request
-	client.SimulationEngine.SendStatusUpdate()
+	client.SimulationEngine.SendStatusUpdate("")
 	return nil
 }
 
-
-// sendErrorResponse sends a simulation_control_error message to the client
-func (h *SimulationEventHandlerImpl) sendErrorResponse(client *Client, message string, errorMsg string) error {
-	response := SimulationControlResponse{
-		Success: false,
-		Message: message,
-		Data:    nil,
-		Error:   errorMsg,
-	}
-
-	responseMessage := WebSocketMessage{
-		Type: MessageType("simulation_control_error"),
-		Data: response,
-	}
-
-	client.SendMessage(responseMessage)
-	return nil
-}
