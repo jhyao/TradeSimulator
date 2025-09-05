@@ -3,7 +3,6 @@ package websocket
 import (
 	"encoding/json"
 
-	simulationEngine "tradesimulator/internal/engines/simulation"
 	"tradesimulator/internal/models"
 	"tradesimulator/internal/services"
 )
@@ -26,17 +25,14 @@ type OrderControlResponse struct {
 type OrderEventHandlerImpl struct {
 	orderService     *services.OrderService
 	portfolioService *services.PortfolioService
-	simulationEngine *simulationEngine.SimulationEngine
-	hub              *Hub
+	// Remove global engines - now each client has its own
 }
 
 // NewOrderEventHandler creates a new order event handler
-func NewOrderEventHandler(orderService *services.OrderService, portfolioService *services.PortfolioService, simEngine *simulationEngine.SimulationEngine, hub *Hub) *OrderEventHandlerImpl {
+func NewOrderEventHandler(orderService *services.OrderService, portfolioService *services.PortfolioService) *OrderEventHandlerImpl {
 	return &OrderEventHandlerImpl{
 		orderService:     orderService,
 		portfolioService: portfolioService,
-		simulationEngine: simEngine,
-		hub:              hub,
 	}
 }
 
@@ -72,7 +68,7 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 	}
 
 	// Check if simulation is running and get current data
-	status := h.simulationEngine.GetStatus()
+	status := client.SimulationEngine.GetStatus()
 	if !status.IsRunning {
 		return h.sendOrderResponse(client, false, "Simulation not running", nil, "Cannot place orders when simulation is not running")
 	}
@@ -81,8 +77,8 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		return h.sendOrderResponse(client, false, "Invalid current price", nil, "Cannot determine current price")
 	}
 
-	// Place the order (using default user ID 1 for now)
-	order, trade, err := h.orderService.PlaceMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
+	// Place the order using the client's order execution engine (using default user ID 1 for now)
+	order, trade, err := client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
 	if err != nil {
 		return h.sendOrderResponse(client, false, "Failed to place order", nil, err.Error())
 	}

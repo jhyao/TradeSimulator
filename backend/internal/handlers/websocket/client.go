@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/websocket"
+	simulationEngine "tradesimulator/internal/engines/simulation"
+	"tradesimulator/internal/engines/trading"
 )
 
 // WebSocket upgrader with CORS settings
@@ -18,7 +20,7 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-// Client represents a WebSocket client
+// Client represents a WebSocket client with its own engines
 type Client struct {
 	Conn              *websocket.Conn
 	Send              chan []byte
@@ -26,6 +28,10 @@ type Client struct {
 	ID                string
 	SimulationHandler SimulationEventHandler
 	OrderHandler      OrderEventHandler
+	
+	// Session-specific engines
+	SimulationEngine *simulationEngine.SimulationEngine
+	OrderEngine      trading.OrderExecutionEngineInterface
 }
 
 // SimulationEventHandler interface for handling simulation events
@@ -38,8 +44,8 @@ type OrderEventHandler interface {
 	HandleMessage(client *Client, message WebSocketMessage) error
 }
 
-// NewClient creates a new WebSocket client
-func NewClient(conn *websocket.Conn, hub *Hub, simHandler SimulationEventHandler, orderHandler OrderEventHandler) *Client {
+// NewClient creates a new WebSocket client with its own engine instances
+func NewClient(conn *websocket.Conn, hub *Hub, simHandler SimulationEventHandler, orderHandler OrderEventHandler, simEngine *simulationEngine.SimulationEngine, orderEngine trading.OrderExecutionEngineInterface) *Client {
 	return &Client{
 		Conn:              conn,
 		Send:              make(chan []byte, 256),
@@ -47,12 +53,15 @@ func NewClient(conn *websocket.Conn, hub *Hub, simHandler SimulationEventHandler
 		ID:                generateClientID(),
 		SimulationHandler: simHandler,
 		OrderHandler:      orderHandler,
+		SimulationEngine:  simEngine,
+		OrderEngine:       orderEngine,
 	}
 }
 
 // readPump handles reading messages from the WebSocket connection
 func (c *Client) readPump() {
 	defer func() {
+		c.cleanup()
 		c.Hub.UnregisterClient(c)
 		c.Conn.Close()
 	}()
@@ -162,4 +171,43 @@ func (c *Client) SendMessage(message WebSocketMessage) {
 	default:
 		log.Printf("Client %s send channel full, dropping message", c.ID)
 	}
+}
+
+// cleanup handles cleanup of session-specific engines when client disconnects
+func (c *Client) cleanup() {
+	log.Printf("Cleaning up engines for client %s", c.ID)
+	
+	// Stop and cleanup simulation engine
+	if c.SimulationEngine != nil {
+		if err := c.SimulationEngine.Stop(); err != nil {
+			log.Printf("Error stopping simulation engine for client %s: %v", c.ID, err)
+		}
+		c.SimulationEngine.Cleanup()
+		c.SimulationEngine = nil
+		log.Printf("Simulation engine cleaned up for client %s", c.ID)
+	}
+	
+	// Order execution engine doesn't need cleanup as it's stateless
+	c.OrderEngine = nil
+	
+	log.Printf("Engine cleanup completed for client %s", c.ID)
+}
+
+// ClientMessageAdapter adapts Client to implement ClientMessageSender
+type ClientMessageAdapter struct {
+	client *Client
+}
+
+// SendMessage implements ClientMessageSender interface
+func (cma *ClientMessageAdapter) SendMessage(messageType string, data interface{}) {
+	message := WebSocketMessage{
+		Type: MessageType(messageType),
+		Data: data,
+	}
+	cma.client.SendMessage(message)
+}
+
+// NewClientMessageAdapter creates a new adapter for the client
+func NewClientMessageAdapter(client *Client) *ClientMessageAdapter {
+	return &ClientMessageAdapter{client: client}
 }

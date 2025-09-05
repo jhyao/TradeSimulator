@@ -5,11 +5,15 @@ import (
 	"log"
 
 	"tradesimulator/internal/dao/trading"
-	"tradesimulator/internal/interfaces"
 	"tradesimulator/internal/models"
 
 	"gorm.io/gorm"
 )
+
+// ClientMessageSender interface for sending messages to a specific client
+type ClientMessageSender interface {
+	SendMessage(messageType string, data interface{})
+}
 
 const (
 	DefaultTradingFeeRate = 0.001 // 0.1% flat rate
@@ -20,7 +24,7 @@ type OrderExecutionEngine struct {
 	orderDAO    trading.OrderDAOInterface
 	tradeDAO    trading.TradeDAOInterface
 	positionDAO trading.PositionDAOInterface
-	hub         interfaces.WebSocketHub
+	client      ClientMessageSender
 	db          *gorm.DB
 }
 
@@ -32,12 +36,12 @@ type OrderExecutionEngineInterface interface {
 }
 
 // NewOrderExecutionEngine creates a new order execution engine
-func NewOrderExecutionEngine(orderDAO trading.OrderDAOInterface, tradeDAO trading.TradeDAOInterface, positionDAO trading.PositionDAOInterface, hub interfaces.WebSocketHub, db *gorm.DB) OrderExecutionEngineInterface {
+func NewOrderExecutionEngine(orderDAO trading.OrderDAOInterface, tradeDAO trading.TradeDAOInterface, positionDAO trading.PositionDAOInterface, client ClientMessageSender, db *gorm.DB) OrderExecutionEngineInterface {
 	return &OrderExecutionEngine{
 		orderDAO:    orderDAO,
 		tradeDAO:    tradeDAO,
 		positionDAO: positionDAO,
-		hub:         hub,
+		client:      client,
 		db:          db,
 	}
 }
@@ -86,8 +90,8 @@ func (oe *OrderExecutionEngine) ExecuteMarketOrder(userID, simulationID uint, sy
 	log.Printf("Created order %d: %s %s %.8f %s at simulation price %.8f",
 		order.ID, string(side), symbol, quantity, string(models.OrderTypeMarket), currentPrice)
 
-	// Broadcast order placed notification
-	oe.broadcastOrderUpdate("order_placed", order, nil)
+	// Send order placed notification to client
+	oe.sendOrderUpdate("order_placed", order, nil)
 
 	// Execute order immediately (market order)
 	trade, err := oe.executeOrder(tx, order, currentPrice, simulationTime)
@@ -103,8 +107,8 @@ func (oe *OrderExecutionEngine) ExecuteMarketOrder(userID, simulationID uint, sy
 
 	log.Printf("Order %d executed successfully, trade %d created", order.ID, trade.ID)
 
-	// Broadcast order executed notification
-	oe.broadcastOrderUpdate("order_executed", order, trade)
+	// Send order executed notification to client
+	oe.sendOrderUpdate("order_executed", order, trade)
 
 	return order, trade, nil
 }
@@ -245,8 +249,12 @@ func (oe *OrderExecutionEngine) CalculateFee(quantity, price float64) float64 {
 	return quantity * price * DefaultTradingFeeRate
 }
 
-// broadcastOrderUpdate broadcasts order updates via WebSocket
-func (oe *OrderExecutionEngine) broadcastOrderUpdate(eventType string, order *models.Order, trade *models.Trade) {
+// sendOrderUpdate sends order updates to the client via WebSocket
+func (oe *OrderExecutionEngine) sendOrderUpdate(eventType string, order *models.Order, trade *models.Trade) {
+	if oe.client == nil {
+		return // No client to send to
+	}
+
 	data := map[string]interface{}{
 		"order": order,
 	}
@@ -255,6 +263,6 @@ func (oe *OrderExecutionEngine) broadcastOrderUpdate(eventType string, order *mo
 		data["trade"] = trade
 	}
 
-	oe.hub.BroadcastMessageString(eventType, data)
-	log.Printf("Broadcasted %s for order %d", eventType, order.ID)
+	oe.client.SendMessage(eventType, data)
+	log.Printf("Sent %s for order %d", eventType, order.ID)
 }

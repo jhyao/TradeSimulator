@@ -76,7 +76,6 @@ func main() {
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
 	marketHandler := handlers.NewMarketHandler(marketDataService)
-	wsHandler := wsHandlers.NewWebSocketHandler()
 
 	// Initialize DAOs
 	simulationDAO := simulation.NewSimulationDAO(database.GetDB())
@@ -87,25 +86,26 @@ func main() {
 	// Initialize portfolio service
 	portfolioService := services.NewPortfolioService()
 	
-	// Initialize simulation engine and handler
-	simEngine := simulationEngine.NewSimulationEngine(wsHandler.GetHub(), binanceClient, portfolioService, simulationDAO)
-	simulationHandler := handlers.NewSimulationHandler(simEngine, simulationDAO)
+	// Initialize WebSocket handler with dependencies (engines will be created per-client)
+	wsHandler := wsHandlers.NewWebSocketHandler(binanceClient, portfolioService, simulationDAO, orderDAO, tradeDAO, positionDAO)
 
-	// Initialize order execution engine
-	orderExecutionEngine := tradingEngine.NewOrderExecutionEngine(orderDAO, tradeDAO, positionDAO, wsHandler.GetHub(), database.GetDB())
+	// Initialize order service (for REST API endpoints) 
+	// Create a simple order execution engine for REST API usage
+	restOrderExecutionEngine := tradingEngine.NewOrderExecutionEngine(orderDAO, tradeDAO, positionDAO, nil, database.GetDB())
+	orderService := services.NewOrderService(orderDAO, tradeDAO, restOrderExecutionEngine)
 
-	// Initialize order service
-	orderService := services.NewOrderService(orderDAO, tradeDAO, orderExecutionEngine)
-
-	// Initialize order handler
-	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, simEngine)
-
-	// Initialize WebSocket event handlers
-	simulationEventHandler := wsHandlers.NewSimulationEventHandler(simEngine, wsHandler.GetHub())
-	orderEventHandler := wsHandlers.NewOrderEventHandler(orderService, portfolioService, simEngine, wsHandler.GetHub())
+	// Initialize event handlers (no longer need global engines)
+	simulationEventHandler := wsHandlers.NewSimulationEventHandler()
+	orderEventHandler := wsHandlers.NewOrderEventHandler(orderService, portfolioService)
 	
 	// Set handlers on WebSocket handler for message processing
 	wsHandler.SetHandlers(simulationEventHandler, orderEventHandler)
+
+	// Initialize REST API handlers (will use their own engines if needed)
+	// Create simple engines for REST API usage
+	restSimulationEngine := simulationEngine.NewSimulationEngine(nil, binanceClient, portfolioService, simulationDAO)
+	simulationHandler := handlers.NewSimulationHandler(restSimulationEngine, simulationDAO)
+	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, restSimulationEngine)
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)
