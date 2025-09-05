@@ -68,7 +68,7 @@ function AppContent() {
           ...prev,
           state: status.state as 'stopped' | 'playing' | 'paused',
           speed: status.speed,
-          simulationTime: status.currentTime ? parseInt(status.currentTime) : null,
+          simulationTime: status.currentPriceTime || null,
           startTime: status.startTime ? parseInt(status.startTime) : null,
           progress: status.progress,
           lastCandle: null // Clear on sync
@@ -165,7 +165,7 @@ function AppContent() {
             ...prev,
             state: status.state as 'stopped' | 'playing' | 'paused',
             speed: status.speed,
-            simulationTime: status.currentTime ? parseInt(status.currentTime) : null,
+            simulationTime: status.currentPriceTime || null,
             startTime: status.startTime ? parseInt(status.startTime) : null,
             progress: status.progress
           }));

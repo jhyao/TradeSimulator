@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"net/http"
-	"time"
+	"strconv"
 
 	"tradesimulator/internal/services"
 
@@ -10,152 +10,15 @@ import (
 )
 
 type SimulationHandler struct {
-	engine *services.SimulationEngine
+	engine                  *services.SimulationEngine
+	simulationRecordService *services.SimulationRecordService
 }
 
 func NewSimulationHandler(engine *services.SimulationEngine) *SimulationHandler {
 	return &SimulationHandler{
-		engine: engine,
+		engine:                  engine,
+		simulationRecordService: services.NewSimulationRecordService(),
 	}
-}
-
-type StartSimulationRequest struct {
-	Symbol    string `json:"symbol" binding:"required"`
-	StartTime int64  `json:"startTime" binding:"required"`
-	Interval  string `json:"interval" binding:"required"`
-	Speed     int    `json:"speed"`
-}
-
-type SetSpeedRequest struct {
-	Speed int `json:"speed" binding:"required"`
-}
-
-type SetTimeframeRequest struct {
-	Timeframe string `json:"timeframe" binding:"required"`
-}
-
-// POST /api/v1/simulation/start
-func (sh *SimulationHandler) StartSimulation(c *gin.Context) {
-	var req StartSimulationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Default speed to 60x if not specified
-	if req.Speed == 0 {
-		req.Speed = 60
-	}
-
-	// Validate speed (must be positive)
-	if req.Speed <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Speed must be positive"})
-		return
-	}
-
-	// Validate start time is not in the future
-	currentTimeMs := time.Now().UnixMilli()
-	if req.StartTime > currentTimeMs {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Start time cannot be in the future"})
-		return
-	}
-
-	// Start the simulation with default funding (REST API doesn't support custom initial funding)
-	if err := sh.engine.Start(req.Symbol, req.Interval, req.StartTime, req.Speed, 10000.0); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":   "Simulation started",
-		"symbol":    req.Symbol,
-		"startTime": req.StartTime,
-		"interval":  req.Interval,
-		"speed":     req.Speed,
-	})
-}
-
-// POST /api/v1/simulation/pause
-func (sh *SimulationHandler) PauseSimulation(c *gin.Context) {
-	if err := sh.engine.Pause(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Simulation paused"})
-}
-
-// POST /api/v1/simulation/resume
-func (sh *SimulationHandler) ResumeSimulation(c *gin.Context) {
-	if err := sh.engine.Resume(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Simulation resumed"})
-}
-
-// POST /api/v1/simulation/stop
-func (sh *SimulationHandler) StopSimulation(c *gin.Context) {
-	if err := sh.engine.Stop(); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Simulation stopped"})
-}
-
-// POST /api/v1/simulation/speed
-func (sh *SimulationHandler) SetSpeed(c *gin.Context) {
-	var req SetSpeedRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := sh.engine.SetSpeed(req.Speed); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Speed updated",
-		"speed":   req.Speed,
-	})
-}
-
-// POST /api/v1/simulation/timeframe
-func (sh *SimulationHandler) SetTimeframe(c *gin.Context) {
-	var req SetTimeframeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Validate timeframe format
-	validTimeframes := []string{"1m", "5m", "15m", "1h", "4h", "1d"}
-	valid := false
-	for _, tf := range validTimeframes {
-		if req.Timeframe == tf {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid timeframe. Must be one of: 1m, 5m, 15m, 1h, 4h, 1d"})
-		return
-	}
-
-	// Engine handles speed-based validation
-	if err := sh.engine.SetTimeframe(req.Timeframe); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":   "Timeframe updated",
-		"timeframe": req.Timeframe,
-	})
 }
 
 // GET /api/v1/simulation/status
@@ -164,20 +27,107 @@ func (sh *SimulationHandler) GetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, status)
 }
 
-// RegisterSimulationRoutes registers remaining simulation routes
-// Most simulation control is now handled via WebSocket messages
+// GET /api/v1/simulations
+func (sh *SimulationHandler) GetSimulations(c *gin.Context) {
+	// Default to user 1 for now
+	userID := uint(1)
+
+	// Parse query parameters
+	limitStr := c.DefaultQuery("limit", "50")
+	offsetStr := c.DefaultQuery("offset", "0")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit parameter"})
+		return
+	}
+
+	offset, err := strconv.Atoi(offsetStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid offset parameter"})
+		return
+	}
+
+	simulations, err := sh.simulationRecordService.GetUserSimulations(userID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"simulations": simulations,
+		"count":       len(simulations),
+	})
+}
+
+// GET /api/v1/simulations/:id
+func (sh *SimulationHandler) GetSimulation(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation ID"})
+		return
+	}
+
+	simulation, err := sh.simulationRecordService.GetSimulationByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "simulation not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, simulation)
+}
+
+// GET /api/v1/simulations/:id/stats
+func (sh *SimulationHandler) GetSimulationStats(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation ID"})
+		return
+	}
+
+	stats, err := sh.simulationRecordService.GetSimulationStats(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "simulation not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// DELETE /api/v1/simulations/:id
+func (sh *SimulationHandler) DeleteSimulation(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation ID"})
+		return
+	}
+
+	err = sh.simulationRecordService.DeleteSimulation(uint(id))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "simulation deleted successfully"})
+}
+
+// RegisterSimulationRoutes registers simulation routes
 func RegisterSimulationRoutes(router *gin.RouterGroup, handler *SimulationHandler) {
+	// Current simulation status
 	simulation := router.Group("/simulation")
 	{
-		// Keep status endpoint for debugging and health checks
 		simulation.GET("/status", handler.GetStatus)
-		
-		// Removed obsolete control endpoints - now handled via WebSocket:
-		// - POST /start
-		// - POST /pause 
-		// - POST /resume
-		// - POST /stop
-		// - POST /speed
-		// - POST /timeframe
+	}
+
+	// Historical simulations
+	simulations := router.Group("/simulations")
+	{
+		simulations.GET("", handler.GetSimulations)
+		simulations.GET("/:id", handler.GetSimulation)
+		simulations.GET("/:id/stats", handler.GetSimulationStats)
+		simulations.DELETE("/:id", handler.DeleteSimulation)
 	}
 }

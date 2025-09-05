@@ -14,11 +14,9 @@ interface SimulationStatus {
   symbol: string;
   interval: string;
   speed: number;
-  currentIndex: number;
-  totalCandles: number;
   progress: number;
   startTime: string;
-  currentTime: string;
+  currentPriceTime: number;
   currentPrice: number;
   simulationID: number;
   isRunning: boolean;
@@ -262,11 +260,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           symbol: '',
           interval: '',
           speed: 60,
-          currentIndex: 0,
-          totalCandles: 0,
           progress: 0,
           startTime: '0',
-          currentTime: '0',
+          currentPriceTime: 0,
           currentPrice: 0
         });
       };

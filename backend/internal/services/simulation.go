@@ -47,10 +47,11 @@ type SimulationEngine struct {
 	binanceService *BinanceService
 
 	// Base data streaming support
-	baseInterval      string         // Optimal base interval (1m, 5m, etc.)
-	baseDataset       []models.OHLCV // Base interval historical data
-	currentSimTime    int64          // Current simulation time in milliseconds
-	lastCandleEndTime int64          // Last candle time processed in milliseconds
+	baseInterval     string         // Optimal base interval (1m, 5m, etc.)
+	baseDataset      []models.OHLCV // Base interval historical data
+	currentSimTime   int64          // Current simulation time in milliseconds
+	currentPriceTime int64          // Time of current price in milliseconds
+	currentPrice     float64        // Current price from most recent processed base candle
 
 	// Dynamic change channels
 	speedChangeChan     chan int    // For dynamic speed changes
@@ -79,19 +80,17 @@ type SimulationUpdateData struct {
 }
 
 type SimulationStatus struct {
-	State        string  `json:"state"`
-	Symbol       string  `json:"symbol"`
-	Interval     string  `json:"interval"`
-	Speed        int     `json:"speed"`
-	CurrentIndex int     `json:"currentIndex"`
-	TotalCandles int     `json:"totalCandles"`
-	Progress     float64 `json:"progress"`
-	StartTime    string  `json:"startTime"`
-	CurrentTime  string  `json:"currentTime"`
-	CurrentPrice float64 `json:"currentPrice"`
-	SimulationID uint    `json:"simulationID"`
-	IsRunning    bool    `json:"isRunning"`
-	SimulationTime int64 `json:"simulationTime"`
+	State            string  `json:"state"`
+	Symbol           string  `json:"symbol"`
+	Interval         string  `json:"interval"`
+	Speed            int     `json:"speed"`
+	Progress         float64 `json:"progress"`
+	StartTime        string  `json:"startTime"`
+	CurrentPriceTime int64   `json:"currentPriceTime"`
+	CurrentPrice     float64 `json:"currentPrice"`
+	SimulationID     uint    `json:"simulationID"`
+	IsRunning        bool    `json:"isRunning"`
+	SimulationTime   int64   `json:"simulationTime"`
 }
 
 func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService, portfolioService *PortfolioService) *SimulationEngine {
@@ -150,12 +149,21 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 		return fmt.Errorf("no historical data available from start time")
 	}
 
-	// displayDataset removed - only using baseDataset for simulation progression
+	// Reset all time-related state for new simulation
+	se.currentSimTime = 0
+	se.currentPriceTime = 0
+	se.currentPrice = 0
+	se.lastDataLoadTime = 0
+	se.currentIndex = 0
+
+	// Clear old data arrays
+	se.baseDataset = nil
+
+	// Set new simulation data
 	se.baseDataset = baseDataset
 	se.startTime = startTime
 	se.currentSimTime = startTime
-	se.lastCandleEndTime = startTime
-	se.currentIndex = 0
+	se.currentPriceTime = startTime
 	se.state = StatePlaying
 
 	// Create simulation record
@@ -323,10 +331,12 @@ func (se *SimulationEngine) processNextBaseUpdate() bool {
 
 		// Check if this base candle's end time is now <= current simulation time
 		if baseCandle.EndTime <= se.currentSimTime {
+			// Update current price and price time
+			se.currentPrice = baseCandle.Close
+			se.currentPriceTime = baseCandle.EndTime
 			// Broadcast this base candle
 			se.broadcastBaseCandle(baseCandle)
 			se.currentIndex++
-			se.lastCandleEndTime = baseCandle.EndTime
 		} else {
 			// No more candles ready, break out of loop
 			break
@@ -502,16 +512,7 @@ func (se *SimulationEngine) Stop() error {
 	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusStopped, se.currentSimTime)
 
 	se.state = StateStopped
-	se.currentIndex = 0
-
-	// Reset all time-related state to ensure clean start for next simulation
-	se.currentSimTime = 0
-	se.lastCandleEndTime = 0
-	se.startTime = 0
-	se.lastDataLoadTime = 0
-
-	// Clear data arrays
-	se.baseDataset = nil
+	// Keep simulation status for display until next start
 
 	if se.ticker != nil {
 		se.ticker.Stop()
@@ -627,13 +628,13 @@ func (se *SimulationEngine) handleSpeedChange(newSpeed int) error {
 		// Load data from aligned boundary for new base interval
 		// Find the boundary time that aligns with new base interval before current simulation time
 		newBaseIntervalMs := models.GetIntervalDurationMs(se.baseInterval)
-		alignedStartTime := (se.lastCandleEndTime / newBaseIntervalMs) * newBaseIntervalMs
+		alignedStartTime := (se.currentPriceTime + 1/newBaseIntervalMs) * newBaseIntervalMs
 
 		// Go back a few intervals to ensure we have enough data
 		loadStartTime := alignedStartTime - (newBaseIntervalMs * 10)
 
-		log.Printf("Loading new base data from aligned time %d (aligned: %d, last candle end time: %d)",
-			loadStartTime, alignedStartTime, se.lastCandleEndTime)
+		log.Printf("Loading new base data from aligned time %d (aligned: %d, current price time: %d)",
+			loadStartTime, alignedStartTime, se.currentPriceTime)
 
 		newBaseDataset, err := se.binanceService.GetHistoricalData(se.symbol, se.baseInterval, 1000, &loadStartTime, nil, false)
 		if err != nil {
@@ -647,10 +648,10 @@ func (se *SimulationEngine) handleSpeedChange(newSpeed int) error {
 		se.baseDataset = newBaseDataset
 
 		// Find current position in new base dataset
-		// Look for the first candle that hasn't been completed yet (endTime > lastCandleEndTime)
+		// Look for the first candle that hasn't been completed yet (endTime > currentPriceTime)
 		newIndex := len(newBaseDataset) // Default to end if not found
 		for i, candle := range newBaseDataset {
-			if candle.EndTime > se.lastCandleEndTime {
+			if candle.EndTime > se.currentPriceTime {
 				newIndex = i
 				break
 			}
@@ -703,36 +704,23 @@ func (se *SimulationEngine) GetStatus() SimulationStatus {
 	se.mu.RLock()
 	defer se.mu.RUnlock()
 
-	var currentPrice float64
-	var currentTime string
-
-	// Get current price from most recent processed base candle
-	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
-		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
-		currentPrice = lastProcessedCandle.Close
-		currentTime = fmt.Sprintf("%d", se.currentSimTime)
-	}
-
 	// Progress calculation placeholder - will be time-based in future
 	progress := float64(0)
 
 	return SimulationStatus{
-		State:          string(se.state),
-		Symbol:         se.symbol,
-		Interval:       se.interval,
-		Speed:          se.speed,
-		CurrentIndex:   se.currentIndex,
-		TotalCandles:   len(se.baseDataset),
-		Progress:       progress,
-		StartTime:      fmt.Sprintf("%d", se.startTime),
-		CurrentTime:    currentTime,
-		CurrentPrice:   currentPrice,
-		SimulationID:   se.currentSimulationID,
-		IsRunning:      se.state == StatePlaying || se.state == StatePaused,
-		SimulationTime: se.currentSimTime,
+		State:            string(se.state),
+		Symbol:           se.symbol,
+		Interval:         se.interval,
+		Speed:            se.speed,
+		Progress:         progress,
+		StartTime:        fmt.Sprintf("%d", se.startTime),
+		CurrentPriceTime: se.currentPriceTime,
+		CurrentPrice:     se.currentPrice,
+		SimulationID:     se.currentSimulationID,
+		IsRunning:        se.state == StatePlaying || se.state == StatePaused,
+		SimulationTime:   se.currentSimTime,
 	}
 }
-
 
 func (se *SimulationEngine) Cleanup() {
 	se.mu.Lock()
@@ -771,22 +759,17 @@ func (se *SimulationEngine) createInitialUSDTPosition(userID uint, simulationID 
 	return nil
 }
 
-
 // updateSimulationStatusWithPortfolioValue updates simulation status with current portfolio value calculation
 func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status models.SimulationStatus, endSimTime int64) {
 	if se.currentSimulationID == 0 {
 		return
 	}
 
-	currentPrice := 0.0
-	if se.currentIndex > 0 && se.currentIndex <= len(se.baseDataset) {
-		lastProcessedCandle := se.baseDataset[se.currentIndex-1]
-		currentPrice = lastProcessedCandle.Close
-	}
+	currentPrice := se.currentPrice
 
 	simulationID := se.currentSimulationID
 	symbol := se.symbol
-	
+
 	if currentPrice > 0 {
 		// Calculate current portfolio value using lock-free version
 		if totalValue, err := se.calculateCurrentPortfolioValue(currentPrice, simulationID, symbol); err != nil {
@@ -824,7 +807,6 @@ func (se *SimulationEngine) updateSimulationStatus(status models.SimulationStatu
 		log.Printf("Failed to update simulation status to %s: %v", status, err)
 	}
 }
-
 
 // calculateCurrentPortfolioValue calculates portfolio value without acquiring internal locks
 func (se *SimulationEngine) calculateCurrentPortfolioValue(currentPrice float64, simulationID uint, symbol string) (float64, error) {

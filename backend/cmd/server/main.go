@@ -74,7 +74,6 @@ func main() {
 	// Initialize simulation engine and handler
 	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService, portfolioService)
 	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
-	simulationRecordHandler := handlers.NewSimulationRecordHandler()
 
 	// Initialize order service
 	orderService := services.NewOrderService(wsHandler.GetHub())
@@ -113,7 +112,6 @@ func main() {
 
 		// Simulation endpoints
 		handlers.RegisterSimulationRoutes(api, simulationHandler)
-		handlers.RegisterSimulationRecordRoutes(api, simulationRecordHandler)
 
 		// Order and portfolio endpoints
 		orders := api.Group("/orders")

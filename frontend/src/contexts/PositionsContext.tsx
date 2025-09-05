@@ -173,7 +173,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
         if (interval) clearInterval(interval);
       };
     }
-  }, [connectionState, simulationState, fetchPositions]);
+  }, [connectionState, simulationState, currentSimulationStatus, fetchPositions]);
 
   const calculatedPositions = calculatePositions(positions, currentPrice, symbol);
 
