@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	simulationEngine "tradesimulator/internal/engines/simulation"
 	"tradesimulator/internal/services"
 	"github.com/gin-gonic/gin"
 )
@@ -12,16 +13,16 @@ import (
 type OrderHandler struct {
 	orderService      *services.OrderService
 	portfolioService  *services.PortfolioService
-	simulationEngine  *services.SimulationEngine
+	simulationEngine  *simulationEngine.SimulationEngine
 }
 
 
 // NewOrderHandler creates a new order handler
-func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService, simulationEngine *services.SimulationEngine) *OrderHandler {
+func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService, simEngine *simulationEngine.SimulationEngine) *OrderHandler {
 	return &OrderHandler{
 		orderService:     orderService,
 		portfolioService: portfolioService,
-		simulationEngine: simulationEngine,
+		simulationEngine: simEngine,
 	}
 }
 

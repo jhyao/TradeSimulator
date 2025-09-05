@@ -4,9 +4,16 @@ import (
 	"log"
 	_ "tradesimulator/docs" // Import generated docs
 	"tradesimulator/internal/config"
+	"tradesimulator/internal/dao/simulation"
+	"tradesimulator/internal/dao/trading"
 	"tradesimulator/internal/database"
+	simulationEngine "tradesimulator/internal/engines/simulation"
+	tradingEngine "tradesimulator/internal/engines/trading"
 	"tradesimulator/internal/handlers"
+	wsHandlers "tradesimulator/internal/handlers/websocket"
+	"tradesimulator/internal/integrations/binance"
 	"tradesimulator/internal/services"
+	"tradesimulator/internal/services/market"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -60,30 +67,45 @@ func main() {
 		c.Next()
 	})
 
+	// Initialize integrations
+	binanceClient := binance.NewBinanceService()
+	
 	// Initialize services
-	binanceService := services.NewBinanceService()
+	marketDataService := market.NewMarketDataService(binanceClient)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler()
-	marketHandler := handlers.NewMarketHandler()
-	wsHandler := handlers.NewWebSocketHandler()
+	marketHandler := handlers.NewMarketHandler(marketDataService)
+	wsHandler := wsHandlers.NewWebSocketHandler()
+
+	// Initialize DAOs
+	simulationDAO := simulation.NewSimulationDAO(database.GetDB())
+	orderDAO := trading.NewOrderDAO(database.GetDB())
+	tradeDAO := trading.NewTradeDAO(database.GetDB())
+	positionDAO := trading.NewPositionDAO(database.GetDB())
 
 	// Initialize portfolio service
 	portfolioService := services.NewPortfolioService()
 	
 	// Initialize simulation engine and handler
-	simulationEngine := services.NewSimulationEngine(wsHandler.GetHub(), binanceService, portfolioService)
-	simulationHandler := handlers.NewSimulationHandler(simulationEngine)
+	simEngine := simulationEngine.NewSimulationEngine(wsHandler.GetHub(), binanceClient, portfolioService, simulationDAO)
+	simulationHandler := handlers.NewSimulationHandler(simEngine, simulationDAO)
+
+	// Initialize order execution engine
+	orderExecutionEngine := tradingEngine.NewOrderExecutionEngine(orderDAO, tradeDAO, positionDAO, wsHandler.GetHub(), database.GetDB())
 
 	// Initialize order service
-	orderService := services.NewOrderService(wsHandler.GetHub())
+	orderService := services.NewOrderService(orderDAO, tradeDAO, orderExecutionEngine)
 
 	// Initialize order handler
-	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, simulationEngine)
+	orderHandler := handlers.NewOrderHandler(orderService, portfolioService, simEngine)
 
+	// Initialize WebSocket event handlers
+	simulationEventHandler := wsHandlers.NewSimulationEventHandler(simEngine, wsHandler.GetHub())
+	orderEventHandler := wsHandlers.NewOrderEventHandler(orderService, portfolioService, simEngine, wsHandler.GetHub())
+	
 	// Set handlers on WebSocket handler for message processing
-	wsHandler.SetSimulationHandler(simulationHandler)
-	wsHandler.SetOrderHandler(orderHandler)
+	wsHandler.SetHandlers(simulationEventHandler, orderEventHandler)
 
 	// Health check endpoint
 	r.GET("/health", healthHandler.Health)

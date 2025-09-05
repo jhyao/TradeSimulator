@@ -4,20 +4,21 @@ import (
 	"net/http"
 	"strconv"
 
-	"tradesimulator/internal/services"
+	"tradesimulator/internal/dao/simulation"
+	simulationEngine "tradesimulator/internal/engines/simulation"
 
 	"github.com/gin-gonic/gin"
 )
 
 type SimulationHandler struct {
-	engine                  *services.SimulationEngine
-	simulationRecordService *services.SimulationRecordService
+	engine        *simulationEngine.SimulationEngine
+	simulationDAO simulation.SimulationDAOInterface
 }
 
-func NewSimulationHandler(engine *services.SimulationEngine) *SimulationHandler {
+func NewSimulationHandler(engine *simulationEngine.SimulationEngine, simulationDAO simulation.SimulationDAOInterface) *SimulationHandler {
 	return &SimulationHandler{
-		engine:                  engine,
-		simulationRecordService: services.NewSimulationRecordService(),
+		engine:        engine,
+		simulationDAO: simulationDAO,
 	}
 }
 
@@ -64,7 +65,7 @@ func (sh *SimulationHandler) GetSimulations(c *gin.Context) {
 		return
 	}
 
-	simulations, err := sh.simulationRecordService.GetUserSimulations(userID, limit, offset)
+	simulations, err := sh.simulationDAO.GetUserSimulations(userID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -94,7 +95,7 @@ func (sh *SimulationHandler) GetSimulation(c *gin.Context) {
 		return
 	}
 
-	simulation, err := sh.simulationRecordService.GetSimulationByID(uint(id))
+	simulation, err := sh.simulationDAO.GetSimulationByID(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "simulation not found"})
 		return
@@ -121,7 +122,7 @@ func (sh *SimulationHandler) GetSimulationStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := sh.simulationRecordService.GetSimulationStats(uint(id))
+	stats, err := sh.simulationDAO.GetSimulationStats(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "simulation not found"})
 		return
@@ -148,7 +149,7 @@ func (sh *SimulationHandler) DeleteSimulation(c *gin.Context) {
 		return
 	}
 
-	err = sh.simulationRecordService.DeleteSimulation(uint(id))
+	err = sh.simulationDAO.DeleteSimulation(uint(id))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

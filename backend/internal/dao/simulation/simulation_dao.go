@@ -1,23 +1,46 @@
-package services
+package simulation
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 
-	"tradesimulator/internal/database"
 	"tradesimulator/internal/models"
+	"gorm.io/gorm"
 )
 
-// SimulationRecordService manages simulation record operations
-type SimulationRecordService struct{}
+// ExtraConfig represents additional simulation configuration
+type ExtraConfig struct {
+	Speed     int    `json:"speed,omitempty"`
+	Timeframe string `json:"timeframe,omitempty"`
+}
 
-func NewSimulationRecordService() *SimulationRecordService {
-	return &SimulationRecordService{}
+// SimulationDAO handles database operations for simulation records
+type SimulationDAO struct {
+	db *gorm.DB
+}
+
+// SimulationDAOInterface defines the contract for simulation data access
+type SimulationDAOInterface interface {
+	CreateSimulationRecord(userID uint, symbol string, startSimTime, endSimTime int64, initialFunding float64, mode models.SimulationMode, extraConfig *ExtraConfig) (*models.Simulation, error)
+	UpdateSimulationStatus(simulationID uint, status models.SimulationStatus) error
+	UpdateSimulationStatusWithDetails(simulationID uint, status models.SimulationStatus, endSimTime int64, totalValue *float64) error
+	GetSimulationByID(simulationID uint) (*models.Simulation, error)
+	GetUserSimulations(userID uint, limit, offset int) ([]models.Simulation, error)
+	GetRunningSimulation(userID uint) (*models.Simulation, error)
+	DeleteSimulation(simulationID uint) error
+	GetSimulationStats(simulationID uint) (map[string]interface{}, error)
+}
+
+// NewSimulationDAO creates a new simulation DAO instance
+func NewSimulationDAO(db *gorm.DB) SimulationDAOInterface {
+	return &SimulationDAO{
+		db: db,
+	}
 }
 
 // CreateSimulationRecord creates a new simulation record when starting simulation
-func (s *SimulationRecordService) CreateSimulationRecord(userID uint, symbol string, startSimTime, endSimTime int64, initialFunding float64, mode models.SimulationMode, extraConfig *ExtraConfig) (*models.Simulation, error) {
+func (s *SimulationDAO) CreateSimulationRecord(userID uint, symbol string, startSimTime, endSimTime int64, initialFunding float64, mode models.SimulationMode, extraConfig *ExtraConfig) (*models.Simulation, error) {
 	// Convert extra config to JSON string
 	extraConfigJSON := "{}"
 	if extraConfig != nil {
@@ -39,7 +62,7 @@ func (s *SimulationRecordService) CreateSimulationRecord(userID uint, symbol str
 		Status:         models.SimulationStatusRunning,
 	}
 
-	if err := database.DB.Create(simulation).Error; err != nil {
+	if err := s.db.Create(simulation).Error; err != nil {
 		return nil, fmt.Errorf("failed to create simulation record: %w", err)
 	}
 
@@ -50,8 +73,8 @@ func (s *SimulationRecordService) CreateSimulationRecord(userID uint, symbol str
 }
 
 // UpdateSimulationStatus updates the status of a simulation record
-func (s *SimulationRecordService) UpdateSimulationStatus(simulationID uint, status models.SimulationStatus) error {
-	result := database.DB.Model(&models.Simulation{}).
+func (s *SimulationDAO) UpdateSimulationStatus(simulationID uint, status models.SimulationStatus) error {
+	result := s.db.Model(&models.Simulation{}).
 		Where("id = ?", simulationID).
 		Update("status", status)
 
@@ -68,7 +91,7 @@ func (s *SimulationRecordService) UpdateSimulationStatus(simulationID uint, stat
 }
 
 // UpdateSimulationStatusWithDetails updates simulation status along with end time and total value
-func (s *SimulationRecordService) UpdateSimulationStatusWithDetails(simulationID uint, status models.SimulationStatus, endSimTime int64, totalValue *float64) error {
+func (s *SimulationDAO) UpdateSimulationStatusWithDetails(simulationID uint, status models.SimulationStatus, endSimTime int64, totalValue *float64) error {
 	updates := map[string]interface{}{
 		"status": status,
 	}
@@ -82,7 +105,7 @@ func (s *SimulationRecordService) UpdateSimulationStatusWithDetails(simulationID
 		updates["total_value"] = *totalValue
 	}
 
-	result := database.DB.Model(&models.Simulation{}).
+	result := s.db.Model(&models.Simulation{}).
 		Where("id = ?", simulationID).
 		Updates(updates)
 
@@ -106,20 +129,19 @@ func (s *SimulationRecordService) UpdateSimulationStatusWithDetails(simulationID
 	return nil
 }
 
-
 // GetSimulationByID retrieves a simulation record by ID
-func (s *SimulationRecordService) GetSimulationByID(simulationID uint) (*models.Simulation, error) {
+func (s *SimulationDAO) GetSimulationByID(simulationID uint) (*models.Simulation, error) {
 	var simulation models.Simulation
-	if err := database.DB.First(&simulation, simulationID).Error; err != nil {
+	if err := s.db.First(&simulation, simulationID).Error; err != nil {
 		return nil, fmt.Errorf("failed to get simulation record: %w", err)
 	}
 	return &simulation, nil
 }
 
 // GetUserSimulations retrieves all simulations for a user
-func (s *SimulationRecordService) GetUserSimulations(userID uint, limit, offset int) ([]models.Simulation, error) {
+func (s *SimulationDAO) GetUserSimulations(userID uint, limit, offset int) ([]models.Simulation, error) {
 	var simulations []models.Simulation
-	query := database.DB.Where("user_id = ?", userID).
+	query := s.db.Where("user_id = ?", userID).
 		Order("created_at DESC")
 
 	if limit > 0 {
@@ -137,9 +159,9 @@ func (s *SimulationRecordService) GetUserSimulations(userID uint, limit, offset 
 }
 
 // GetRunningSimulation gets the currently running simulation for a user
-func (s *SimulationRecordService) GetRunningSimulation(userID uint) (*models.Simulation, error) {
+func (s *SimulationDAO) GetRunningSimulation(userID uint) (*models.Simulation, error) {
 	var simulation models.Simulation
-	err := database.DB.Where("user_id = ? AND status IN (?)", userID, []models.SimulationStatus{
+	err := s.db.Where("user_id = ? AND status IN (?)", userID, []models.SimulationStatus{
 		models.SimulationStatusRunning,
 		models.SimulationStatusPaused,
 	}).First(&simulation).Error
@@ -152,9 +174,9 @@ func (s *SimulationRecordService) GetRunningSimulation(userID uint) (*models.Sim
 }
 
 // DeleteSimulation deletes a simulation record and all associated data
-func (s *SimulationRecordService) DeleteSimulation(simulationID uint) error {
+func (s *SimulationDAO) DeleteSimulation(simulationID uint) error {
 	// Start a transaction to ensure all related data is deleted
-	tx := database.DB.Begin()
+	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -194,7 +216,7 @@ func (s *SimulationRecordService) DeleteSimulation(simulationID uint) error {
 }
 
 // GetSimulationStats calculates statistics for a simulation
-func (s *SimulationRecordService) GetSimulationStats(simulationID uint) (map[string]interface{}, error) {
+func (s *SimulationDAO) GetSimulationStats(simulationID uint) (map[string]interface{}, error) {
 	// Get simulation record
 	simulation, err := s.GetSimulationByID(simulationID)
 	if err != nil {
@@ -223,8 +245,8 @@ func (s *SimulationRecordService) GetSimulationStats(simulationID uint) (map[str
 
 	// Count orders and trades
 	var orderCount, tradeCount int64
-	database.DB.Model(&models.Order{}).Where("simulation_id = ?", simulationID).Count(&orderCount)
-	database.DB.Model(&models.Trade{}).Where("simulation_id = ?", simulationID).Count(&tradeCount)
+	s.db.Model(&models.Order{}).Where("simulation_id = ?", simulationID).Count(&orderCount)
+	s.db.Model(&models.Trade{}).Where("simulation_id = ?", simulationID).Count(&tradeCount)
 
 	stats["order_count"] = orderCount
 	stats["trade_count"] = tradeCount

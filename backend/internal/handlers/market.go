@@ -7,16 +7,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"tradesimulator/internal/models"
-	"tradesimulator/internal/services"
+	"tradesimulator/internal/services/market"
 )
 
 type MarketHandler struct {
-	binanceService *services.BinanceService
+	marketDataService market.MarketDataServiceInterface
 }
 
-func NewMarketHandler() *MarketHandler {
+func NewMarketHandler(marketDataService market.MarketDataServiceInterface) *MarketHandler {
 	return &MarketHandler{
-		binanceService: services.NewBinanceService(),
+		marketDataService: marketDataService,
 	}
 }
 
@@ -49,7 +49,7 @@ func (h *MarketHandler) GetHistoricalData(c *gin.Context) {
 	interval := c.DefaultQuery("interval", "1h")
 	
 	// Validate interval
-	if !h.binanceService.ValidateInterval(interval) {
+	if !h.marketDataService.ValidateInterval(interval) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "invalid interval. Valid intervals: 1m, 3m, 5m, 15m, 30m, 1h, 2h, 4h, 6h, 8h, 12h, 1d, 3d, 1w, 1M",
 		})
@@ -87,7 +87,7 @@ func (h *MarketHandler) GetHistoricalData(c *gin.Context) {
 	}
 
 	// Fetch historical data
-	data, err := h.binanceService.GetHistoricalData(symbol, interval, limit, startTime, endTime, enableIncomplete)
+	data, err := h.marketDataService.GetHistoricalData(symbol, interval, limit, startTime, endTime, enableIncomplete)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -112,7 +112,7 @@ func (h *MarketHandler) GetHistoricalData(c *gin.Context) {
 // @Success 200 {object} map[string]interface{} "List of supported symbols"
 // @Router /market/symbols [get]
 func (h *MarketHandler) GetSupportedSymbols(c *gin.Context) {
-	symbols := h.binanceService.GetSupportedSymbols()
+	symbols := h.marketDataService.GetSupportedSymbols()
 	c.JSON(http.StatusOK, gin.H{
 		"symbols": symbols,
 	})
@@ -139,7 +139,7 @@ func (h *MarketHandler) GetEarliestTime(c *gin.Context) {
 	}
 
 	// Fetch earliest available time
-	earliestTime, err := h.binanceService.GetEarliestAvailableTime(symbol)
+	earliestTime, err := h.marketDataService.GetEarliestAvailableTime(symbol)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

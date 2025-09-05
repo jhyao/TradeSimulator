@@ -1,4 +1,4 @@
-package services
+package simulation
 
 import (
 	"context"
@@ -7,14 +7,14 @@ import (
 	"sync"
 	"time"
 
+	simulationDAO "tradesimulator/internal/dao/simulation"
 	"tradesimulator/internal/database"
+	"tradesimulator/internal/integrations/binance"
+	"tradesimulator/internal/interfaces"
 	"tradesimulator/internal/models"
+	"tradesimulator/internal/services"
 )
 
-// WebSocketHub interface to avoid import cycles
-type WebSocketHub interface {
-	BroadcastMessageString(msgType string, data interface{})
-}
 
 type SimulationState string
 
@@ -24,11 +24,6 @@ const (
 	StatePaused  SimulationState = "paused"
 )
 
-// ExtraConfig represents additional simulation configuration
-type ExtraConfig struct {
-	Speed     int    `json:"speed,omitempty"`
-	Timeframe string `json:"timeframe,omitempty"`
-}
 
 type SimulationEngine struct {
 	mu             sync.RWMutex
@@ -37,14 +32,14 @@ type SimulationEngine struct {
 	currentIndex   int // Position in baseDataset
 	tickerInterval time.Duration
 	ticker         *time.Ticker // Controls replay speed
-	hub            WebSocketHub // WebSocket broadcasting
+	hub            interfaces.WebSocketHub // WebSocket broadcasting
 	symbol         string
 	interval       string
 	stopChan       chan struct{}
 	startTime      int64 // Start time in milliseconds
 	ctx            context.Context
 	cancel         context.CancelFunc
-	binanceService *BinanceService
+	binanceService *binance.BinanceService
 
 	// Base data streaming support
 	baseInterval     string         // Optimal base interval (1m, 5m, etc.)
@@ -65,9 +60,9 @@ type SimulationEngine struct {
 	lastDataLoadTime  int64     // Last timestamp of loaded data in milliseconds
 
 	// Simulation record integration
-	currentSimulationID uint                     // Current simulation record ID
-	simulationRecordSvc *SimulationRecordService // Service for managing simulation records
-	portfolioService    *PortfolioService        // Service for portfolio operations
+	currentSimulationID uint                             // Current simulation record ID
+	simulationDAO       simulationDAO.SimulationDAOInterface // DAO for managing simulation records
+	portfolioService    *services.PortfolioService        // Service for portfolio operations
 }
 
 type SimulationUpdateData struct {
@@ -93,7 +88,7 @@ type SimulationStatus struct {
 	SimulationTime   int64   `json:"simulationTime"`
 }
 
-func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService, portfolioService *PortfolioService) *SimulationEngine {
+func NewSimulationEngine(hub interfaces.WebSocketHub, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface) *SimulationEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &SimulationEngine{
@@ -109,7 +104,7 @@ func NewSimulationEngine(hub WebSocketHub, binanceService *BinanceService, portf
 		dataLoadThreshold:   0.8,  // Load more data when 80% consumed
 		maxBufferSize:       5000, // Keep max 5000 candles in memory
 		dataLoadChan:        make(chan bool, 1),
-		simulationRecordSvc: NewSimulationRecordService(),
+		simulationDAO:       simDAO,
 		portfolioService:    portfolioService,
 	}
 }
@@ -167,19 +162,19 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 	se.state = StatePlaying
 
 	// Create simulation record
-	extraConfig := &ExtraConfig{
+	extraConfig := &simulationDAO.ExtraConfig{
 		Speed:     speed,
 		Timeframe: interval,
 	}
-	simulation, err := se.simulationRecordSvc.CreateSimulationRecord(1, symbol, startTime, 0, initialFunding, models.SimulationModeSpot, extraConfig)
+	simulationRecord, err := se.simulationDAO.CreateSimulationRecord(1, symbol, startTime, 0, initialFunding, models.SimulationModeSpot, extraConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create simulation record: %w", err)
 	}
-	se.currentSimulationID = simulation.ID
+	se.currentSimulationID = simulationRecord.ID
 
 	// Create initial USDT position for the simulation (use user ID 1 as default for simulation)
 	if initialFunding > 0 {
-		if err := se.createInitialUSDTPosition(1, &simulation.ID, initialFunding); err != nil {
+		if err := se.createInitialUSDTPosition(1, &simulationRecord.ID, initialFunding); err != nil {
 			return fmt.Errorf("failed to create initial USDT position: %w", err)
 		}
 		log.Printf("Created initial USDT position with funding: $%.2f", initialFunding)
@@ -775,12 +770,12 @@ func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status mode
 		if totalValue, err := se.calculateCurrentPortfolioValue(currentPrice, simulationID, symbol); err != nil {
 			log.Printf("Failed to calculate portfolio value: %v", err)
 			// Fallback to simple status update
-			if err := se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
+			if err := se.simulationDAO.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
 				log.Printf("Failed to update simulation status to %s: %v", status, err)
 			}
 		} else {
 			// Update with calculated portfolio value
-			if err := se.simulationRecordSvc.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, &totalValue); err != nil {
+			if err := se.simulationDAO.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, &totalValue); err != nil {
 				log.Printf("Failed to update simulation with portfolio calculation to %s: %v", status, err)
 			}
 		}
@@ -788,9 +783,9 @@ func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status mode
 		// If no price available, just update status
 		var err error
 		if endSimTime != 0 {
-			err = se.simulationRecordSvc.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, nil)
+			err = se.simulationDAO.UpdateSimulationStatusWithDetails(se.currentSimulationID, status, endSimTime, nil)
 		} else {
-			err = se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status)
+			err = se.simulationDAO.UpdateSimulationStatus(se.currentSimulationID, status)
 		}
 		if err != nil {
 			log.Printf("Failed to update simulation status to %s: %v", status, err)
@@ -803,7 +798,7 @@ func (se *SimulationEngine) updateSimulationStatus(status models.SimulationStatu
 		return
 	}
 
-	if err := se.simulationRecordSvc.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
+	if err := se.simulationDAO.UpdateSimulationStatus(se.currentSimulationID, status); err != nil {
 		log.Printf("Failed to update simulation status to %s: %v", status, err)
 	}
 }
