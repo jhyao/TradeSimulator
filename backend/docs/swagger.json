@@ -48,6 +48,53 @@
                 }
             }
         },
+        "/market/earliest-time/{symbol}": {
+            "get": {
+                "description": "Get the earliest available data timestamp for a specific trading symbol",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "market"
+                ],
+                "summary": "Get Earliest Available Time for Symbol",
+                "parameters": [
+                    {
+                        "enum": [
+                            "BTCUSDT",
+                            "ETHUSDT"
+                        ],
+                        "type": "string",
+                        "description": "Trading symbol",
+                        "name": "symbol",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Earliest available time",
+                        "schema": {
+                            "$ref": "#/definitions/models.EarliestTimeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/market/historical": {
             "get": {
                 "description": "Fetch historical OHLCV data for supported trading pairs (BTCUSDT, ETHUSDT)",
@@ -114,6 +161,13 @@
                         "description": "End time in milliseconds",
                         "name": "endTime",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Enable incomplete candle support",
+                        "name": "enableIncomplete",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -160,9 +214,377 @@
                     }
                 }
             }
+        },
+        "/orders": {
+            "get": {
+                "description": "Get list of orders for a specific simulation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get User Orders",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Simulation ID",
+                        "name": "simulation_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Number of orders to return (default: 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of orders",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/positions": {
+            "get": {
+                "description": "Get list of current positions for a specific simulation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get User Positions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Simulation ID",
+                        "name": "simulation_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of positions",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/simulation/status": {
+            "get": {
+                "description": "Get the current status of the running simulation engine",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "simulation"
+                ],
+                "summary": "Get Current Simulation Status",
+                "responses": {
+                    "200": {
+                        "description": "Current simulation status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/simulations": {
+            "get": {
+                "description": "Get list of simulation records for the current user",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "simulations"
+                ],
+                "summary": "Get User Simulations",
+                "parameters": [
+                    {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Number of simulations to return (default: 50)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of simulations to skip (default: 0)",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of simulations",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/simulations/{id}": {
+            "get": {
+                "description": "Get detailed information about a specific simulation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "simulations"
+                ],
+                "summary": "Get Simulation by ID",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Simulation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Simulation details",
+                        "schema": {
+                            "$ref": "#/definitions/models.Simulation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Simulation not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete a specific simulation and all its related data",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "simulations"
+                ],
+                "summary": "Delete Simulation",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Simulation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success message",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/simulations/{id}/stats": {
+            "get": {
+                "description": "Get performance statistics for a specific simulation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "simulations"
+                ],
+                "summary": "Get Simulation Statistics",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Simulation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Simulation statistics",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Simulation not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/trades": {
+            "get": {
+                "description": "Get list of executed trades for a specific simulation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "orders"
+                ],
+                "summary": "Get User Trades",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Simulation ID",
+                        "name": "simulation_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Number of trades to return (default: 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of trades",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "models.EarliestTimeResponse": {
+            "type": "object",
+            "properties": {
+                "earliestTime": {
+                    "type": "integer"
+                },
+                "earliestTimeISO": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
         "models.HistoricalDataResponse": {
             "type": "object",
             "properties": {
@@ -183,8 +605,16 @@
                 "close": {
                     "type": "number"
                 },
+                "endTime": {
+                    "description": "End time of the candle",
+                    "type": "integer"
+                },
                 "high": {
                     "type": "number"
+                },
+                "isComplete": {
+                    "description": "Whether this candle is complete or partial",
+                    "type": "boolean"
                 },
                 "low": {
                     "type": "number"
@@ -192,13 +622,85 @@
                 "open": {
                     "type": "number"
                 },
-                "time": {
+                "startTime": {
+                    "description": "Start time of the candle",
                     "type": "integer"
                 },
                 "volume": {
                     "type": "number"
                 }
             }
+        },
+        "models.Simulation": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "end_sim_time": {
+                    "description": "Simulation end time in milliseconds",
+                    "type": "integer"
+                },
+                "extra_configs": {
+                    "description": "JSON format for additional configs",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "initial_funding": {
+                    "type": "number"
+                },
+                "mode": {
+                    "$ref": "#/definitions/models.SimulationMode"
+                },
+                "start_sim_time": {
+                    "description": "Simulation start time in milliseconds",
+                    "type": "integer"
+                },
+                "status": {
+                    "$ref": "#/definitions/models.SimulationStatus"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "total_value": {
+                    "description": "Final portfolio value when completed",
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.SimulationMode": {
+            "type": "string",
+            "enum": [
+                "spot",
+                "future"
+            ],
+            "x-enum-varnames": [
+                "SimulationModeSpot",
+                "SimulationModeFuture"
+            ]
+        },
+        "models.SimulationStatus": {
+            "type": "string",
+            "enum": [
+                "running",
+                "paused",
+                "completed",
+                "stopped"
+            ],
+            "x-enum-varnames": [
+                "SimulationStatusRunning",
+                "SimulationStatusPaused",
+                "SimulationStatusCompleted",
+                "SimulationStatusStopped"
+            ]
         }
     }
 }

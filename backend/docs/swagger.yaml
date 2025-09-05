@@ -1,5 +1,14 @@
 basePath: /api/v1
 definitions:
+  models.EarliestTimeResponse:
+    properties:
+      earliestTime:
+        type: integer
+      earliestTimeISO:
+        type: string
+      symbol:
+        type: string
+    type: object
   models.HistoricalDataResponse:
     properties:
       data:
@@ -13,17 +22,75 @@ definitions:
     properties:
       close:
         type: number
+      endTime:
+        description: End time of the candle
+        type: integer
       high:
         type: number
+      isComplete:
+        description: Whether this candle is complete or partial
+        type: boolean
       low:
         type: number
       open:
         type: number
-      time:
+      startTime:
+        description: Start time of the candle
         type: integer
       volume:
         type: number
     type: object
+  models.Simulation:
+    properties:
+      created_at:
+        type: string
+      end_sim_time:
+        description: Simulation end time in milliseconds
+        type: integer
+      extra_configs:
+        description: JSON format for additional configs
+        type: string
+      id:
+        type: integer
+      initial_funding:
+        type: number
+      mode:
+        $ref: '#/definitions/models.SimulationMode'
+      start_sim_time:
+        description: Simulation start time in milliseconds
+        type: integer
+      status:
+        $ref: '#/definitions/models.SimulationStatus'
+      symbol:
+        type: string
+      total_value:
+        description: Final portfolio value when completed
+        type: number
+      updated_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
+  models.SimulationMode:
+    enum:
+    - spot
+    - future
+    type: string
+    x-enum-varnames:
+    - SimulationModeSpot
+    - SimulationModeFuture
+  models.SimulationStatus:
+    enum:
+    - running
+    - paused
+    - completed
+    - stopped
+    type: string
+    x-enum-varnames:
+    - SimulationStatusRunning
+    - SimulationStatusPaused
+    - SimulationStatusCompleted
+    - SimulationStatusStopped
 host: localhost:8080
 info:
   contact:
@@ -56,6 +123,39 @@ paths:
       summary: Health Check
       tags:
       - health
+  /market/earliest-time/{symbol}:
+    get:
+      description: Get the earliest available data timestamp for a specific trading
+        symbol
+      parameters:
+      - description: Trading symbol
+        enum:
+        - BTCUSDT
+        - ETHUSDT
+        in: path
+        name: symbol
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Earliest available time
+          schema:
+            $ref: '#/definitions/models.EarliestTimeResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Earliest Available Time for Symbol
+      tags:
+      - market
   /market/historical:
     get:
       description: Fetch historical OHLCV data for supported trading pairs (BTCUSDT,
@@ -105,6 +205,11 @@ paths:
         in: query
         name: endTime
         type: integer
+      - default: false
+        description: Enable incomplete candle support
+        in: query
+        name: enableIncomplete
+        type: boolean
       produces:
       - application/json
       responses:
@@ -139,6 +244,250 @@ paths:
       summary: Get Supported Trading Symbols
       tags:
       - market
+  /orders:
+    get:
+      description: Get list of orders for a specific simulation
+      parameters:
+      - description: Simulation ID
+        in: query
+        name: simulation_id
+        required: true
+        type: string
+      - default: 50
+        description: 'Number of orders to return (default: 50)'
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of orders
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get User Orders
+      tags:
+      - orders
+  /positions:
+    get:
+      description: Get list of current positions for a specific simulation
+      parameters:
+      - description: Simulation ID
+        in: query
+        name: simulation_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of positions
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get User Positions
+      tags:
+      - orders
+  /simulation/status:
+    get:
+      description: Get the current status of the running simulation engine
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current simulation status
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Current Simulation Status
+      tags:
+      - simulation
+  /simulations:
+    get:
+      description: Get list of simulation records for the current user
+      parameters:
+      - default: 50
+        description: 'Number of simulations to return (default: 50)'
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: limit
+        type: integer
+      - default: 0
+        description: 'Number of simulations to skip (default: 0)'
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of simulations
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get User Simulations
+      tags:
+      - simulations
+  /simulations/{id}:
+    delete:
+      description: Delete a specific simulation and all its related data
+      parameters:
+      - description: Simulation ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Success message
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Delete Simulation
+      tags:
+      - simulations
+    get:
+      description: Get detailed information about a specific simulation
+      parameters:
+      - description: Simulation ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Simulation details
+          schema:
+            $ref: '#/definitions/models.Simulation'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Simulation not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Simulation by ID
+      tags:
+      - simulations
+  /simulations/{id}/stats:
+    get:
+      description: Get performance statistics for a specific simulation
+      parameters:
+      - description: Simulation ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Simulation statistics
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Simulation not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get Simulation Statistics
+      tags:
+      - simulations
+  /trades:
+    get:
+      description: Get list of executed trades for a specific simulation
+      parameters:
+      - description: Simulation ID
+        in: query
+        name: simulation_id
+        required: true
+        type: string
+      - default: 50
+        description: 'Number of trades to return (default: 50)'
+        in: query
+        maximum: 1000
+        minimum: 1
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of trades
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get User Trades
+      tags:
+      - orders
 schemes:
 - http
 swagger: "2.0"

@@ -21,13 +21,29 @@ func NewSimulationHandler(engine *services.SimulationEngine) *SimulationHandler 
 	}
 }
 
-// GET /api/v1/simulation/status
+// GetStatus handles GET /api/v1/simulation/status
+// @Summary Get Current Simulation Status
+// @Description Get the current status of the running simulation engine
+// @Tags simulation
+// @Produce json
+// @Success 200 {object} map[string]interface{} "Current simulation status"
+// @Router /simulation/status [get]
 func (sh *SimulationHandler) GetStatus(c *gin.Context) {
 	status := sh.engine.GetStatus()
 	c.JSON(http.StatusOK, status)
 }
 
-// GET /api/v1/simulations
+// GetSimulations handles GET /api/v1/simulations
+// @Summary Get User Simulations
+// @Description Get list of simulation records for the current user
+// @Tags simulations
+// @Produce json
+// @Param limit query int false "Number of simulations to return (default: 50)" default(50) minimum(1) maximum(1000)
+// @Param offset query int false "Number of simulations to skip (default: 0)" default(0) minimum(0)
+// @Success 200 {object} map[string]interface{} "List of simulations"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /simulations [get]
 func (sh *SimulationHandler) GetSimulations(c *gin.Context) {
 	// Default to user 1 for now
 	userID := uint(1)
@@ -60,7 +76,16 @@ func (sh *SimulationHandler) GetSimulations(c *gin.Context) {
 	})
 }
 
-// GET /api/v1/simulations/:id
+// GetSimulation handles GET /api/v1/simulations/:id
+// @Summary Get Simulation by ID
+// @Description Get detailed information about a specific simulation
+// @Tags simulations
+// @Produce json
+// @Param id path int true "Simulation ID"
+// @Success 200 {object} models.Simulation "Simulation details"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 404 {object} map[string]interface{} "Simulation not found"
+// @Router /simulations/{id} [get]
 func (sh *SimulationHandler) GetSimulation(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -78,7 +103,16 @@ func (sh *SimulationHandler) GetSimulation(c *gin.Context) {
 	c.JSON(http.StatusOK, simulation)
 }
 
-// GET /api/v1/simulations/:id/stats
+// GetSimulationStats handles GET /api/v1/simulations/:id/stats
+// @Summary Get Simulation Statistics
+// @Description Get performance statistics for a specific simulation
+// @Tags simulations
+// @Produce json
+// @Param id path int true "Simulation ID"
+// @Success 200 {object} map[string]interface{} "Simulation statistics"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 404 {object} map[string]interface{} "Simulation not found"
+// @Router /simulations/{id}/stats [get]
 func (sh *SimulationHandler) GetSimulationStats(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -96,7 +130,16 @@ func (sh *SimulationHandler) GetSimulationStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-// DELETE /api/v1/simulations/:id
+// DeleteSimulation handles DELETE /api/v1/simulations/:id
+// @Summary Delete Simulation
+// @Description Delete a specific simulation and all its related data
+// @Tags simulations
+// @Produce json
+// @Param id path int true "Simulation ID"
+// @Success 200 {object} map[string]interface{} "Success message"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /simulations/{id} [delete]
 func (sh *SimulationHandler) DeleteSimulation(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
