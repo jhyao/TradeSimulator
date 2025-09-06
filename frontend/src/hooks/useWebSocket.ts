@@ -5,11 +5,6 @@ export interface WebSocketMessage {
   data: any;
 }
 
-export interface PriceUpdateData {
-  symbol: string;
-  price: number;
-  timestamp: number;
-}
 
 export interface ConnectionStatusData {
   status: string;
@@ -29,7 +24,7 @@ export interface SimulationUpdateData {
     volume: number;
     isComplete: boolean;
   };
-  simulationTime: string;
+  simulationTime: number;
   progress: number;
   state: string;
   speed: number;

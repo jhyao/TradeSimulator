@@ -97,15 +97,6 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		responseData["trade"] = trade
 	}
 
-	client.SendMessage(types.WebSocketMessage{
-		Type: types.OrderPlaced,
-		Data: OrderControlResponse{
-			Success: true,
-			Message: "Order placed successfully",
-			Data:    responseData,
-		},
-	})
-
 	return nil
 }
 

@@ -4,7 +4,6 @@ package types
 type MessageType string
 
 const (
-	PriceUpdate      MessageType = "price_update"
 	ConnectionStatus MessageType = "connection_status"
 	StatusUpdate     MessageType = "status_update"
 	SimulationUpdate MessageType = "simulation_update"
@@ -28,13 +27,6 @@ const (
 type WebSocketMessage struct {
 	Type MessageType `json:"type"`
 	Data interface{} `json:"data"`
-}
-
-// PriceUpdateData represents price update message data
-type PriceUpdateData struct {
-	Symbol    string  `json:"symbol"`
-	Price     float64 `json:"price"`
-	Timestamp int64   `json:"timestamp"`
 }
 
 // ConnectionStatusData represents connection status message data

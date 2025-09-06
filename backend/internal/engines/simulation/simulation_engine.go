@@ -62,6 +62,7 @@ type SimulationEngine struct {
 	isLoadingData     bool      // Flag to prevent concurrent loading
 	dataLoadChan      chan bool // Channel to signal successful data load
 	lastDataLoadTime  int64     // Last timestamp of loaded data in milliseconds
+	noMoreDataAvailable bool    // Flag to indicate no more historical data is available
 
 	// Simulation record integration
 	currentSimulationID uint                                 // Current simulation record ID
@@ -72,7 +73,7 @@ type SimulationEngine struct {
 type SimulationUpdateData struct {
 	Symbol         string       `json:"symbol"`
 	BaseCandle     models.OHLCV `json:"baseCandle"` // Single complete base candle
-	SimulationTime string       `json:"simulationTime"`
+	SimulationTime int64        `json:"simulationTime"`
 	Progress       float64      `json:"progress"` // 0-100%
 	State          string       `json:"state"`
 	Speed          int          `json:"speed"`
@@ -194,6 +195,7 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 
 	// Initialize continuous data loading state
 	se.isLoadingData = false
+	se.noMoreDataAvailable = false
 	if len(baseDataset) > 0 {
 		se.lastDataLoadTime = baseDataset[len(baseDataset)-1].StartTime
 	} else {
@@ -300,7 +302,6 @@ func (se *SimulationEngine) runSimulation() {
 			se.mu.Lock()
 			if dataLoadSuccess {
 				log.Printf("Successfully loaded more historical data")
-				se.sendStatusUpdateUnsafe("Additional historical data loaded")
 			} else {
 				log.Printf("Failed to load more historical data")
 				se.sendErrorMessage("Failed to load additional historical data", "")
@@ -370,7 +371,7 @@ func (se *SimulationEngine) sendBaseCandle(baseCandle models.OHLCV) {
 	updateData := SimulationUpdateData{
 		Symbol:         se.symbol,
 		BaseCandle:     baseCandle,
-		SimulationTime: fmt.Sprintf("%d", se.currentSimTime),
+		SimulationTime: se.currentSimTime,
 		Progress:       progress,
 		State:          string(se.state),
 		Speed:          se.speed,
@@ -701,7 +702,7 @@ func (se *SimulationEngine) handleSpeedChange(newSpeed int) error {
 		// Load data from aligned boundary for new base interval
 		// Find the boundary time that aligns with new base interval before current simulation time
 		newBaseIntervalMs := models.GetIntervalDurationMs(se.baseInterval)
-		alignedStartTime := (se.currentPriceTime + 1/newBaseIntervalMs) * newBaseIntervalMs
+		alignedStartTime := ((se.currentPriceTime + 1) / newBaseIntervalMs) * newBaseIntervalMs
 
 		// Go back a few intervals to ensure we have enough data
 		loadStartTime := alignedStartTime - (newBaseIntervalMs * 10)
@@ -719,6 +720,7 @@ func (se *SimulationEngine) handleSpeedChange(newSpeed int) error {
 		}
 
 		se.baseDataset = newBaseDataset
+		se.noMoreDataAvailable = false // Reset since we have new data
 
 		// Find current position in new base dataset
 		// Look for the first candle that hasn't been completed yet (endTime > currentPriceTime)
@@ -930,6 +932,7 @@ func (se *SimulationEngine) loadMoreHistoricalData() error {
 
 	if len(newData) == 0 {
 		log.Printf("No more historical data available")
+		se.noMoreDataAvailable = true
 		return nil
 	}
 
@@ -979,8 +982,8 @@ func (se *SimulationEngine) cleanupOldData() {
 
 // checkDataLoadingNeeded checks if more data loading is needed based on current position
 func (se *SimulationEngine) checkDataLoadingNeeded() {
-	if se.isLoadingData {
-		return // Already loading
+	if se.isLoadingData || se.noMoreDataAvailable {
+		return // Already loading or no more data available
 	}
 
 	// Check if we're approaching the end of available data

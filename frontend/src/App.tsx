@@ -7,6 +7,7 @@ import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from '.
 import OrderPanel from './components/OrderPanel';
 import Portfolio from './components/Portfolio';
 import TradingTabs from './components/TradingTabs';
+import FloatingMessage from './components/FloatingMessage';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { PositionsProvider } from './contexts/PositionsContext';
 import { ConnectionState } from './hooks/useWebSocket';
@@ -47,7 +48,10 @@ function AppContent() {
 
   const { 
     lastSimulationUpdate,
+    currentSimulationStatus,
     connectionState,
+    floatingMessages,
+    removeFloatingMessage,
     startSimulation: wsStartSimulation,
     stopSimulation: wsStopSimulation,
     pauseSimulation: wsPauseSimulation,
@@ -101,7 +105,7 @@ function AppContent() {
       setSimulationState(prev => ({
         ...prev,
         state: lastSimulationUpdate.state as 'stopped' | 'playing' | 'paused',
-        simulationTime: parseInt(lastSimulationUpdate.simulationTime),
+        simulationTime: lastSimulationUpdate.simulationTime,
         progress: lastSimulationUpdate.progress,
         speed: lastSimulationUpdate.speed,
         startTime: prev.startTime, // Preserve start time
@@ -109,6 +113,28 @@ function AppContent() {
       }));
     }
   }, [lastSimulationUpdate]);
+
+  // Handle status updates from WebSocket (like when simulation stops due to end of data)
+  useEffect(() => {
+    if (currentSimulationStatus) {
+      setSimulationState(prev => ({
+        ...prev,
+        state: currentSimulationStatus.state as 'stopped' | 'playing' | 'paused',
+        speed: currentSimulationStatus.speed,
+        simulationTime: currentSimulationStatus.currentPriceTime || prev.simulationTime,
+        progress: currentSimulationStatus.progress,
+        startTime: currentSimulationStatus.startTime ? parseInt(currentSimulationStatus.startTime) : prev.startTime
+      }));
+
+      // If simulation stopped and we have symbol/interval info, sync them
+      if (currentSimulationStatus.state === 'stopped' && currentSimulationStatus.symbol) {
+        setSymbol(currentSimulationStatus.symbol);
+        if (currentSimulationStatus.interval) {
+          setTimeframe(currentSimulationStatus.interval);
+        }
+      }
+    }
+  }, [currentSimulationStatus]);
 
   const handleStartTimeSelected = useCallback((startTime: Date) => {
     setSelectedStartTime(startTime);
@@ -133,7 +159,7 @@ function AppContent() {
       } catch (error) {
         console.error('Failed to change timeframe during simulation:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        alert(`Failed to change timeframe: ${errorMessage}`);
+        console.error(`Failed to change timeframe: ${errorMessage}`);
         return; // Don't update local state if call failed
       }
     }
@@ -157,7 +183,7 @@ function AppContent() {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       if (errorMessage.includes('simulation already running')) {
-        alert('A simulation is already running. Please stop the current simulation before starting a new one.');
+        console.warn('A simulation is already running. Please stop the current simulation before starting a new one.');
         // Refresh the simulation state to sync with backend
         try {
           const status = await wsGetStatus();
@@ -173,7 +199,7 @@ function AppContent() {
           console.error('Failed to sync simulation state:', syncError);
         }
       } else {
-        alert(`Failed to start simulation: ${errorMessage}`);
+        console.error(`Failed to start simulation: ${errorMessage}`);
       }
     }
   }, [selectedStartTime, symbol, timeframe, simulationState.speed, initialFunding, wsStartSimulation, wsGetStatus]);
@@ -231,7 +257,7 @@ function AppContent() {
     } catch (error) {
       console.error('Failed to change speed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      alert(`Failed to change speed: ${errorMessage}`);
+      console.error(`Failed to change speed: ${errorMessage}`);
     }
   }, [timeframe, handleTimeframeChange, wsSetSpeed]);
 
@@ -462,6 +488,12 @@ function AppContent() {
           </div>
         </PositionsProvider>
       </div>
+      
+      {/* Floating Messages */}
+      <FloatingMessage 
+        messages={floatingMessages}
+        onMessageExpire={removeFloatingMessage}
+      />
     </div>
   );
 }

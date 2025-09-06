@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useWebSocket, WebSocketMessage, PriceUpdateData, SimulationUpdateData, ConnectionState } from '../hooks/useWebSocket';
+import { useWebSocket, WebSocketMessage, SimulationUpdateData, ConnectionState } from '../hooks/useWebSocket';
+import { MessageData } from '../components/FloatingMessage';
 
 interface OrderNotification {
   type: 'order_placed' | 'order_executed' | 'order_failed';
@@ -26,10 +27,12 @@ interface SimulationStatus {
 interface WebSocketContextType {
   connectionState: ConnectionState;
   lastMessage: WebSocketMessage | null;
-  lastPriceUpdate: PriceUpdateData | null;
   lastSimulationUpdate: SimulationUpdateData | null;
   lastOrderNotification: OrderNotification | null;
   currentSimulationStatus: SimulationStatus | null;
+  floatingMessages: MessageData[];
+  addFloatingMessage: (message: string, type: 'status' | 'error') => void;
+  removeFloatingMessage: (id: string) => void;
   sendMessage: (message: any) => void;
   connect: () => void;
   disconnect: () => void;
@@ -52,10 +55,10 @@ interface WebSocketProviderProps {
 }
 
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }) => {
-  const [lastPriceUpdate, setLastPriceUpdate] = useState<PriceUpdateData | null>(null);
   const [lastSimulationUpdate, setLastSimulationUpdate] = useState<SimulationUpdateData | null>(null);
   const [lastOrderNotification, setLastOrderNotification] = useState<OrderNotification | null>(null);
   const [currentSimulationStatus, setCurrentSimulationStatus] = useState<SimulationStatus | null>(null);
+  const [floatingMessages, setFloatingMessages] = useState<MessageData[]>([]);
   
   // Removed unused request tracking variables for now
   
@@ -65,19 +68,36 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const wsUrl = `ws://${host}/websocket/v1/simulation`;
   const { connectionState, lastMessage, sendMessage, connect, disconnect } = useWebSocket(wsUrl);
 
+  // Floating message management
+  const addFloatingMessage = React.useCallback((message: string, type: 'status' | 'error') => {
+    const newMessage: MessageData = {
+      id: `${Date.now()}-${Math.random()}`,
+      message,
+      type,
+      timestamp: Date.now()
+    };
+    
+    setFloatingMessages(prev => [...prev, newMessage]);
+  }, []);
+
+  const removeFloatingMessage = React.useCallback((id: string) => {
+    setFloatingMessages(prev => prev.filter(msg => msg.id !== id));
+  }, []);
+
   // Handle incoming messages
   useEffect(() => {
     if (lastMessage) {
       switch (lastMessage.type) {
-        case 'price_update':
-          setLastPriceUpdate(lastMessage.data as PriceUpdateData);
-          break;
         case 'simulation_update':
           setLastSimulationUpdate(lastMessage.data as SimulationUpdateData);
           break;
         case 'status_update':
           console.log('Received status update:', lastMessage.data);
           setCurrentSimulationStatus(lastMessage.data);
+          // Show floating message if there's a message field
+          if (lastMessage.data.message && lastMessage.data.message.trim()) {
+            addFloatingMessage(lastMessage.data.message, 'status');
+          }
           break;
         case 'simulation_start':
         case 'simulation_pause':
@@ -98,6 +118,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             message: 'Order placed successfully',
             timestamp: Date.now()
           });
+          // Show floating message for order placed
+          const orderPlacedMsg = "Order placed";
+          addFloatingMessage(orderPlacedMsg, 'status');
           break;
         case 'order_executed':
           setLastOrderNotification({
@@ -107,6 +130,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             message: 'Order executed',
             timestamp: Date.now()
           });
+          // Show floating message for order executed
+          const orderExecutedMsg = "Order executed";
+          addFloatingMessage(orderExecutedMsg, 'status');
           break;
         case 'order_control_response':
           handleOrderControlResponse(lastMessage);
@@ -124,6 +150,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           break;
         case 'error':
           console.error('WebSocket error:', lastMessage.data);
+          // Show floating error message
+            const errorMessage = [lastMessage.data.message, lastMessage.data.error]
+            .filter(Boolean)
+            .join(' - ') || 'An error occurred';
+          addFloatingMessage(errorMessage, 'error');
           break;
         default:
           console.log('Unknown message type:', lastMessage.type);
@@ -299,10 +330,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const value: WebSocketContextType = {
     connectionState,
     lastMessage,
-    lastPriceUpdate,
     lastSimulationUpdate,
     lastOrderNotification,
     currentSimulationStatus,
+    floatingMessages,
+    addFloatingMessage,
+    removeFloatingMessage,
     sendMessage,
     connect,
     disconnect,
