@@ -451,6 +451,7 @@ function AppContent() {
                 timeframe={timeframe}
                 selectedStartTime={selectedStartTime}
                 simulationState={simulationState}
+                currentSimulationId={currentSimulationStatus?.simulationID || null}
               />
             </div>
 

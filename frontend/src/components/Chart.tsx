@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle, createSeriesMarkers } from 'lightweight-charts';
 import { MarketApiService } from '../services/marketApi';
 import { CandleAggregator } from '../utils/CandleAggregator';
 import { formatPrice, formatPercentage } from '../utils/numberFormat';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
 
 // OHLCV interface moved to CandleAggregator
 
@@ -30,6 +31,7 @@ interface ChartProps {
   timeframe: string;
   selectedStartTime?: Date | null;
   simulationState?: SimulationState;
+  currentSimulationId?: number | null;
 }
 
 const color_palette = {
@@ -55,7 +57,8 @@ const Chart: React.FC<ChartProps> = ({
   symbol, 
   timeframe, 
   selectedStartTime, 
-  simulationState
+  simulationState,
+  currentSimulationId
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -66,6 +69,7 @@ const Chart: React.FC<ChartProps> = ({
   const candlestickSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const chartRef = useRef<any>(null);
+  const seriesMarkersRef = useRef<any>(null);
   const isInitialLoadComplete = useRef(false);
   const hasReachedEarliestData = useRef(false);
   const [earliestAvailableTime, setEarliestAvailableTime] = useState<number | null>(null);
@@ -98,6 +102,46 @@ const Chart: React.FC<ChartProps> = ({
     }
     return null;
   }, [symbol]);
+
+  const fetchTrades = useCallback(async () => {
+    if (!currentSimulationId) {
+      return [];
+    }
+
+    try {
+      const response = await fetch(`/api/v1/trades?simulation_id=${currentSimulationId}&limit=1000`);
+      if (response.ok) {
+        const data = await response.json();
+        const trades = data.trades || [];
+        
+        // Filter trades for current symbol
+        const symbolTrades = trades.filter((trade: any) => trade.symbol === symbol);
+        
+        // Create markers for all trades
+        const markers = symbolTrades.map((trade: any) => ({
+          time: Math.floor(trade.executed_at / 1000) as any,
+          position: trade.side === 'buy' ? 'belowBar' as const : 'aboveBar' as const,
+          color: trade.side === 'buy' ? '#26a69a' : '#ef5350',
+          shape: trade.side === 'buy' ? 'arrowUp' as const : 'arrowDown' as const,
+          text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
+        }));
+
+        return markers;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch trades:', err);
+    }
+    return [];
+  }, [currentSimulationId, symbol]);
+
+  const refreshTradeMarkers = useCallback(async () => {
+    if (!seriesMarkersRef.current) {
+      return;
+    }
+
+    const markers = await fetchTrades();
+    seriesMarkersRef.current.setMarkers(markers);
+  }, [fetchTrades]);
 
   const fetchData = useCallback(async (endTime?: number, limit: number = 100, enableIncomplete: boolean = false) => {
     const response_data = await MarketApiService.getHistoricalData(
@@ -163,6 +207,12 @@ const Chart: React.FC<ChartProps> = ({
       if (volumeSeriesRef.current) {
         volumeSeriesRef.current.setData(volumeData);
       }
+
+      // Load and set trade markers
+      const markers = await fetchTrades();
+      if (seriesMarkersRef.current && markers.length > 0) {
+        seriesMarkersRef.current.setMarkers(markers);
+      }
       if (rawData.length > 0) {
         displayedRangeStart.current = Math.floor(rawData[0].startTime / 1000);
         console.log('Displayed range start:', displayedRangeStart.current);
@@ -179,7 +229,7 @@ const Chart: React.FC<ChartProps> = ({
       setIsLoading(false);
       isInitialLoadComplete.current = true;
     }
-  }, [fetchData, selectedStartTime, fetchEarliestTime]);
+  }, [fetchData, selectedStartTime, fetchEarliestTime, fetchTrades]);
 
   const loadMoreData = useCallback(async () => {
     // Prevent loading if:
@@ -342,6 +392,9 @@ const Chart: React.FC<ChartProps> = ({
     volumeSeriesRef.current = volumeSeries;
     chartRef.current = chart;
 
+    // Create series markers plugin
+    seriesMarkersRef.current = createSeriesMarkers(candlestickSeries);
+
     // Use async IIFE for proper error handling
     (async () => {
       try {
@@ -446,11 +499,12 @@ const Chart: React.FC<ChartProps> = ({
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
       chartRef.current = null;
+      seriesMarkersRef.current = null;
       
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData]);
+  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData, currentSimulationId]);
 
   // Handle simulation real-time updates with frontend aggregation
   useEffect(() => {
@@ -561,6 +615,24 @@ const Chart: React.FC<ChartProps> = ({
       }
     }
   }, [isLoading]);
+
+  // Get WebSocket context for order notifications
+  const { lastOrderNotification } = useWebSocketContext();
+
+  // Refresh markers when new orders are executed
+  useEffect(() => {
+    if (lastOrderNotification && 
+        lastOrderNotification.type === 'order_executed' &&
+        candlestickSeriesRef.current) {
+      
+      // Small delay to ensure the trade is persisted in the database
+      const refreshTimeout = setTimeout(() => {
+        refreshTradeMarkers();
+      }, 500);
+
+      return () => clearTimeout(refreshTimeout);
+    }
+  }, [lastOrderNotification, refreshTradeMarkers]);
 
   if (error) {
     return (
