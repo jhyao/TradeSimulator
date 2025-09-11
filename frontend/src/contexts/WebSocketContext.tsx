@@ -44,6 +44,7 @@ interface WebSocketContextType {
   setSpeed: (speed: number) => Promise<void>;
   setTimeframe: (timeframe: string) => Promise<void>;
   getStatus: () => Promise<any>;
+  resetSimulationStatus: () => void;
   // Order methods
   placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number) => Promise<void>;
 }
@@ -67,6 +68,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const host = "localhost:8080"
   const wsUrl = `ws://${host}/websocket/v1/simulation`;
   const { connectionState, lastMessage, sendMessage, connect, disconnect } = useWebSocket(wsUrl);
+  
+  // Ref to track current connection state for closures
+  const connectionStateRef = React.useRef<ConnectionState>(connectionState);
+  React.useEffect(() => {
+    connectionStateRef.current = connectionState;
+  }, [connectionState]);
 
   // Floating message management
   const addFloatingMessage = React.useCallback((message: string, type: 'status' | 'error') => {
@@ -97,6 +104,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           // Show floating message if there's a message field
           if (lastMessage.data.message && lastMessage.data.message.trim()) {
             addFloatingMessage(lastMessage.data.message, 'status');
+          }
+          // If simulation stopped (from backend completion or other reasons), disconnect websocket
+          if (lastMessage.data.state === 'stopped') {
+            console.log('Simulation stopped, disconnecting websocket...');
+            setTimeout(() => disconnect(), 500); // Small delay to allow status update to propagate
           }
           break;
         case 'simulation_start':
@@ -160,7 +172,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           console.log('Unknown message type:', lastMessage.type);
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, addFloatingMessage, disconnect]);
 
   // Handle control responses
   const handleControlResponse = (message: WebSocketMessage) => {
@@ -213,7 +225,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   // Send control message with simple promise-based response - memoized
   const sendControlMessage = React.useCallback((type: string, data?: any): Promise<any> => {
     return new Promise((resolve, reject) => {
-      if (connectionState !== ConnectionState.CONNECTED) {
+      if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
         reject(new Error('WebSocket not connected'));
         return;
       }
@@ -236,10 +248,30 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         reject(error);
       }
     });
-  }, [connectionState, sendMessage]);
+  }, [sendMessage]);
 
   // Simulation control methods - memoized to prevent useEffect loops
   const startSimulation = React.useCallback(async (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => {
+    // First establish websocket connection
+    if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+      console.log('Connecting to websocket before starting simulation...');
+      connect();
+      
+      // Wait for connection to be established
+      let attempts = 0;
+      const maxAttempts = 50; // 5 seconds with 100ms intervals
+      
+      while (attempts < maxAttempts && (connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      
+      if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+        throw new Error('Failed to establish websocket connection within timeout');
+      }
+    }
+
+    // Now send the start command
     return sendControlMessage('simulation_control_start', {
       symbol,
       startTime: startTime.getTime(),
@@ -247,7 +279,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       speed,
       initialFunding
     });
-  }, [sendControlMessage]);
+  }, [sendControlMessage, connect]);
 
   const stopSimulation = React.useCallback(async () => {
     return sendControlMessage('simulation_control_stop');
@@ -262,17 +294,27 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [sendControlMessage]);
 
   const setSpeed = React.useCallback(async (speed: number) => {
+    // Only send if connection is established
+    if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+      console.warn('Cannot change speed: WebSocket not connected');
+      return;
+    }
     return sendControlMessage('simulation_control_set_speed', { speed });
   }, [sendControlMessage]);
 
   const setTimeframe = React.useCallback(async (timeframe: string) => {
+    // Only send if connection is established
+    if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+      console.warn('Cannot change timeframe: WebSocket not connected');
+      return;
+    }
     return sendControlMessage('simulation_control_set_timeframe', { timeframe });
   }, [sendControlMessage]);
 
   const getStatus = React.useCallback(async () => {
     // For status, we need to handle it differently since we need the response data
     return new Promise((resolve, reject) => {
-      if (connectionState !== ConnectionState.CONNECTED) {
+      if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
         reject(new Error('WebSocket not connected'));
         return;
       }
@@ -301,7 +343,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // For now, just return a timeout-based response
       setTimeout(cleanup, 500);
     });
-  }, [connectionState, sendMessage]);
+  }, [sendMessage]);
+
+  // Reset simulation status method
+  const resetSimulationStatus = React.useCallback(() => {
+    setCurrentSimulationStatus(null);
+    setLastSimulationUpdate(null);
+    setLastOrderNotification(null);
+  }, []);
 
   // Order methods
   const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number) => {
@@ -311,21 +360,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       quantity
     });
   }, [sendControlMessage]);
-
-  // Request status when WebSocket connects
-  useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
-      console.log('WebSocket connected, requesting simulation status...');
-      // Request current simulation status after a short delay to ensure connection is stable
-      const timeoutId = setTimeout(() => {
-        getStatus().catch((error) => {
-          console.error('Failed to get simulation status:', error);
-        });
-      }, 1000); // Increased delay to 1 second
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [connectionState, getStatus]);
 
   const value: WebSocketContextType = {
     connectionState,
@@ -346,6 +380,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     setSpeed,
     setTimeframe,
     getStatus,
+    resetSimulationStatus,
     placeOrder
   };
 

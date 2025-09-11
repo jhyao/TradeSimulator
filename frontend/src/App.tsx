@@ -10,7 +10,6 @@ import TradingTabs from './components/TradingTabs';
 import FloatingMessage from './components/FloatingMessage';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { PositionsProvider } from './contexts/PositionsContext';
-import { ConnectionState } from './hooks/useWebSocket';
 // Removed SimulationApiService import - now using WebSocket
 import './App.css';
 
@@ -58,46 +57,10 @@ function AppContent() {
     resumeSimulation: wsResumeSimulation,
     setSpeed: wsSetSpeed,
     setTimeframe: wsSetTimeframe,
-    getStatus: wsGetStatus
+    resetSimulationStatus
   } = useWebSocketContext();
 
-  // Sync simulation state on component mount
-  useEffect(() => {
-    const syncSimulationState = async () => {
-      try {
-        const status = await wsGetStatus();
-        console.log('Syncing simulation state from backend:', status);
-        
-        setSimulationState(prev => ({
-          ...prev,
-          state: status.state as 'stopped' | 'playing' | 'paused',
-          speed: status.speed,
-          simulationTime: status.currentPriceTime || null,
-          startTime: status.startTime ? parseInt(status.startTime) : null,
-          progress: status.progress,
-          lastCandle: null // Clear on sync
-        }));
-
-        // If simulation is running, also sync the selected start time and symbol
-        if (status.state !== 'stopped' && status.symbol && status.startTime) {
-          setSymbol(status.symbol);
-          setSelectedStartTime(new Date(parseInt(status.startTime)));
-          // Set timeframe based on backend interval
-          if (status.interval) {
-            setTimeframe(status.interval);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to sync simulation state:', error);
-      }
-    };
-
-    // Only sync when WebSocket is connected
-    if (connectionState === ConnectionState.CONNECTED) {
-      const timer = setTimeout(syncSimulationState, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [connectionState, wsGetStatus]);
+  // No need to sync on connection - backend sends status_update when simulation starts
 
   // Handle simulation updates from WebSocket
   useEffect(() => {
@@ -123,16 +86,7 @@ function AppContent() {
         speed: currentSimulationStatus.speed,
         simulationTime: currentSimulationStatus.currentPriceTime || prev.simulationTime,
         progress: currentSimulationStatus.progress,
-        startTime: currentSimulationStatus.startTime ? parseInt(currentSimulationStatus.startTime) : prev.startTime
       }));
-
-      // If simulation stopped and we have symbol/interval info, sync them
-      if (currentSimulationStatus.state === 'stopped' && currentSimulationStatus.symbol) {
-        setSymbol(currentSimulationStatus.symbol);
-        if (currentSimulationStatus.interval) {
-          setTimeframe(currentSimulationStatus.interval);
-        }
-      }
     }
   }, [currentSimulationStatus]);
 
@@ -147,8 +101,10 @@ function AppContent() {
         startTime: null,
         lastCandle: null
       }));
+      // Reset the WebSocket simulation status to prevent loading trades with old simulationId
+      resetSimulationStatus();
     }
-  }, [simulationState.state]);
+  }, [simulationState.state, resetSimulationStatus]);
 
   const handleTimeframeChange = useCallback(async (newTimeframe: string) => {
     // If simulation is running, use WebSocket to change timeframe mid-simulation
@@ -170,6 +126,9 @@ function AppContent() {
   const handleStartSimulation = useCallback(async () => {
     if (!selectedStartTime) return;
 
+    // Clear previous simulation status before starting new one
+    resetSimulationStatus();
+
     try {
       await wsStartSimulation(symbol, selectedStartTime, timeframe, simulationState.speed, initialFunding);
       setSimulationState(prev => ({ 
@@ -184,25 +143,11 @@ function AppContent() {
       
       if (errorMessage.includes('simulation already running')) {
         console.warn('A simulation is already running. Please stop the current simulation before starting a new one.');
-        // Refresh the simulation state to sync with backend
-        try {
-          const status = await wsGetStatus();
-          setSimulationState(prev => ({
-            ...prev,
-            state: status.state as 'stopped' | 'playing' | 'paused',
-            speed: status.speed,
-            simulationTime: status.currentPriceTime || null,
-            startTime: status.startTime ? parseInt(status.startTime) : null,
-            progress: status.progress
-          }));
-        } catch (syncError) {
-          console.error('Failed to sync simulation state:', syncError);
-        }
       } else {
         console.error(`Failed to start simulation: ${errorMessage}`);
       }
     }
-  }, [selectedStartTime, symbol, timeframe, simulationState.speed, initialFunding, wsStartSimulation, wsGetStatus]);
+  }, [selectedStartTime, symbol, timeframe, simulationState.speed, initialFunding, wsStartSimulation, resetSimulationStatus]);
 
   const handlePauseSimulation = useCallback(async () => {
     try {
@@ -318,6 +263,7 @@ function AppContent() {
               selectedStartTime={selectedStartTime}
               symbol={symbol}
               compact={true}
+              disabled={simulationState.state !== 'stopped'}
             />
           </div>
 

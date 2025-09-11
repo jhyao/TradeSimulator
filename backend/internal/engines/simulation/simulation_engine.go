@@ -264,7 +264,7 @@ func (se *SimulationEngine) runSimulation() {
 						log.Printf("Simulation reached end of base dataset")
 
 						// Complete simulation record with final portfolio value
-						se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusCompleted, se.currentSimTime)
+						se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusCompleted)
 
 						se.state = StateStopped
 						se.sendStatusUpdateUnsafe("Simulation completed - reached end of data")
@@ -551,7 +551,7 @@ func (se *SimulationEngine) Pause() error {
 	se.state = StatePaused
 
 	// Calculate current portfolio value and update simulation record
-	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusPaused, se.currentSimTime)
+	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusPaused)
 
 	log.Printf("Simulation paused at index %d", se.currentIndex)
 	se.sendStatusUpdateUnsafe("Simulation paused")
@@ -585,7 +585,7 @@ func (se *SimulationEngine) Stop() error {
 	}
 
 	// Calculate final portfolio value and complete simulation record
-	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusStopped, se.currentSimTime)
+	se.updateSimulationStatusWithPortfolioValue(models.SimulationStatusStopped)
 
 	se.state = StateStopped
 	// Keep simulation status for display until next start
@@ -813,7 +813,7 @@ func (se *SimulationEngine) createInitialUSDTPosition(userID uint, simulationID 
 }
 
 // updateSimulationStatusWithPortfolioValue updates simulation status with current portfolio value calculation
-func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status models.SimulationStatus, endSimTime int64) {
+func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status models.SimulationStatus) {
 	if se.currentSimulationID == 0 {
 		return
 	}
@@ -822,6 +822,7 @@ func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status mode
 
 	simulationID := se.currentSimulationID
 	symbol := se.symbol
+	endSimTime := se.currentPriceTime
 
 	if currentPrice > 0 {
 		// Calculate current portfolio value using lock-free version

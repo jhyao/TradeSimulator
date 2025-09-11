@@ -6,13 +6,15 @@ interface StartTimeSelectorProps {
   selectedStartTime: Date | null;
   symbol?: string;
   compact?: boolean;
+  disabled?: boolean;
 }
 
 const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({ 
   onStartTimeSelected, 
   selectedStartTime,
   symbol = 'BTCUSDT',
-  compact = false
+  compact = false,
+  disabled = false
 }) => {
   const [datetime, setDatetime] = useState('');
   const [earliestTime, setEarliestTime] = useState<Date | null>(null);
@@ -78,7 +80,7 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
   // Check if the load button should be enabled
   const isLoadButtonEnabled = (): boolean => {
     // Basic checks first
-    if (!datetime || loading || !!error || !earliestTime) {
+    if (!datetime || loading || !!error || !earliestTime || disabled) {
       return false;
     }
 
@@ -131,7 +133,7 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
             }}
             min={earliestTime ? formatDateTimeLocal(earliestTime) : undefined}
             max={formatDateTimeLocal(new Date())}
-            disabled={loading}
+            disabled={loading || disabled}
             style={{
               flex: 1,
               padding: '4px 6px',
@@ -149,15 +151,15 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
                 }
               }
             }}
-            disabled={!datetime || loading || !!validationError}
+            disabled={!datetime || loading || !!validationError || disabled}
             style={{
               padding: '4px 8px',
               fontSize: '11px',
               border: 'none',
               borderRadius: '3px',
-              backgroundColor: !datetime || loading || !!validationError ? '#ccc' : '#007bff',
+              backgroundColor: !datetime || loading || !!validationError || disabled ? '#ccc' : '#007bff',
               color: 'white',
-              cursor: !datetime || loading || !!validationError ? 'not-allowed' : 'pointer',
+              cursor: !datetime || loading || !!validationError || disabled ? 'not-allowed' : 'pointer',
               fontWeight: '500'
             }}
           >
@@ -226,7 +228,7 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
             }}
             min={earliestTime ? formatDateTimeLocal(earliestTime) : undefined}
             max={formatDateTimeLocal(new Date())} // Can't select future dates
-            disabled={loading}
+            disabled={loading || disabled}
             style={{
               padding: '6px 10px',
               border: `1px solid ${validationError ? '#dc3545' : '#ccc'}`,

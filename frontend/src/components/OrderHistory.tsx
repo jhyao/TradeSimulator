@@ -50,7 +50,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/orders/?limit=50&simulation_id=${simulationId}`, {
+      const response = await fetch(`/api/v1/?limit=50&simulation_id=${simulationId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

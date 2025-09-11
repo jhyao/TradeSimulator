@@ -125,7 +125,7 @@ func (s *SimulationDAO) UpdateSimulationStatusWithDetails(simulationID uint, sta
 	if totalValue != nil {
 		logMsg += fmt.Sprintf(", totalValue=%.2f", *totalValue)
 	}
-	log.Printf(logMsg)
+	log.Print(logMsg)
 	return nil
 }
 

@@ -53,7 +53,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const { currentSimulationStatus } = useWebSocketContext();
+  const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
 
   const calculatePositions = useCallback((positions: Position[], marketPrice: number, currentSymbol: string): CalculatedPosition[] => {
     const calculatedPositions: CalculatedPosition[] = [];
@@ -107,7 +107,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/positions/?simulation_id=${simulationId}`, {
+      const response = await fetch(`/api/v1/positions?simulation_id=${simulationId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -162,18 +162,25 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
 
   // Auto-refresh positions data - SINGLE SOURCE OF TRUTH
   useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
+    if (currentSimulationStatus?.state === 'playing') {
       fetchPositions();
-      
-      const interval = simulationState === 'playing' 
-        ? setInterval(fetchPositions, 5000)
-        : null;
-
-      return () => {
-        if (interval) clearInterval(interval);
-      };
     }
-  }, [connectionState, simulationState, currentSimulationStatus, fetchPositions]);
+    
+    const interval = currentSimulationStatus?.state === 'playing' 
+      ? setInterval(fetchPositions, 5000)
+      : null;
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [currentSimulationStatus, fetchPositions]);
+
+  // Refresh positions when order is executed
+  useEffect(() => {
+    if (lastOrderNotification?.type === 'order_executed') {
+      fetchPositions();
+    }
+  }, [lastOrderNotification, fetchPositions]);
 
   const calculatedPositions = calculatePositions(positions, currentPrice, symbol);
 

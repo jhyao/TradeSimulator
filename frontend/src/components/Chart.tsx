@@ -504,7 +504,7 @@ const Chart: React.FC<ChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData, currentSimulationId]);
+  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData]);
 
   // Handle simulation real-time updates with frontend aggregation
   useEffect(() => {

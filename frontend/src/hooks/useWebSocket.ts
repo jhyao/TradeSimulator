@@ -134,14 +134,7 @@ export const useWebSocket = (url: string): UseWebSocketReturn => {
     }
   }, []);
 
-  // Auto-connect on mount
-  useEffect(() => {
-    connect();
-    
-    return () => {
-      disconnect();
-    };
-  }, [connect, disconnect]);
+  // No auto-connect - connection will be managed by simulation lifecycle
 
   // Cleanup on unmount
   useEffect(() => {

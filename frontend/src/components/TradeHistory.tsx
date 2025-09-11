@@ -49,7 +49,7 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/trades/?limit=50&simulation_id=${simulationId}`, {
+      const response = await fetch(`/api/v1/trades?limit=50&simulation_id=${simulationId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

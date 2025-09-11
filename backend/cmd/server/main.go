@@ -40,9 +40,9 @@ func main() {
 	}
 
 	// Run database migrations
-	if err := database.AutoMigrate(); err != nil {
-		log.Fatalf("Failed to run database migrations: %v", err)
-	}
+	// if err := database.AutoMigrate(); err != nil {
+	// 	log.Fatalf("Failed to run database migrations: %v", err)
+	// }
 
 	// Initialize Gin router
 	if cfg.Environment == "production" {
@@ -67,7 +67,7 @@ func main() {
 
 	// Initialize integrations
 	binanceClient := binance.NewBinanceService()
-	
+
 	// Initialize services
 	marketDataService := market.NewMarketDataService(binanceClient)
 
@@ -84,9 +84,9 @@ func main() {
 	// Initialize portfolio service
 	portfolioService := services.NewPortfolioService()
 
-	// Initialize order service (for REST API endpoints) 
+	// Initialize order service (for REST API endpoints)
 	orderService := services.NewOrderService(orderDAO, tradeDAO)
-	
+
 	// Initialize WebSocket handler with dependencies (handlers will be created internally)
 	wsHandler := wsHandlers.NewWebSocketHandler(binanceClient, portfolioService, simulationDAO, orderDAO, tradeDAO, positionDAO, orderService)
 
@@ -125,17 +125,17 @@ func main() {
 		// Order and portfolio endpoints
 		orders := api.Group("/orders")
 		{
-			orders.GET("/", orderHandler.GetOrders)
+			orders.GET("", orderHandler.GetOrders)
 		}
 
 		trades := api.Group("/trades")
 		{
-			trades.GET("/", orderHandler.GetTrades)
+			trades.GET("", orderHandler.GetTrades)
 		}
 
 		positions := api.Group("/positions")
 		{
-			positions.GET("/", orderHandler.GetPositions)
+			positions.GET("", orderHandler.GetPositions)
 		}
 	}
 

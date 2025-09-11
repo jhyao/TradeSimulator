@@ -98,7 +98,22 @@ Update3: simulation record
 2. Create a new simulation record when start simulation, update status when pause/resume/stop.
 3. Add simulation id in order, trade, position tables to bind these records with simulation batches.
 
-Update4: Simulation history view and load
-1. Add simulation history tab in the bottom area, except basic infos, add total P$L and % columns
-2. When open the ui page, load the simulation status to the last simulation record
-3. 
+Update4: websocket connection open/close
+1. Create websocket connection when starting simulation, currently is open connection once open the ui.
+2. Close websocket connection after simulation stopped, two stop cases: stop trigger front frontend and backend stop simulation on completion, but can both cases frontend will receive status_update event that status change to stopped, so can be handled in one place.
+3. "pause" should keep the connection alive, only pause price update, "stop" should close the connection.
+4. Once stopped, clear related things in backend, but keep things in UI.
+
+Update5: resume stopped simulation
+1. Support resume on stopped status, resume will create the connection again, but with last status of stopped simulation. 
+2. Still use old simulation id
+3. Use end_sim_time as currentPriceTime in simulation engine, based on this time to load candle data
+4. when pause/stop/complete should also update speed/timeframe to db record, as speed is needed when resume the stopped simulation
+5. If the end_sim_time is too close to current datetime (for example current time - end_sim_time < speed * 300, means can resume for less than five minutes), then can't resume, because not enough data can be loaded, simulation will stop again quickly.
+6. Once stopped, control button should become "Start New" and "Resume"
+
+Update6: Simulation history view and load
+1. Add simulation history tab in the bottom area, include simulation params, and P&L
+2. On simulation history record, add a "continue" button if the simmulation can be resumed, once click, UI should recover to end status of that simulation
+
+
