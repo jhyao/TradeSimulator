@@ -67,9 +67,11 @@ func (wh *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	// Create client message adapter
 	clientAdapter := NewClientMessageAdapter(client)
 	
-	// Create session-specific engines for this client with the adapter
-	simulationEngineInstance := wh.createSimulationEngineForClient(clientAdapter)
+	// Create order engine first
 	orderEngineInstance := wh.createOrderEngineForClient(clientAdapter)
+	
+	// Create simulation engine with order engine dependency
+	simulationEngineInstance := wh.createSimulationEngineForClient(clientAdapter, orderEngineInstance)
 	
 	// Set the engines on the client
 	client.SimulationEngine = simulationEngineInstance
@@ -81,8 +83,8 @@ func (wh *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 }
 
 // createSimulationEngineForClient creates a new simulation engine instance for a client
-func (wh *WebSocketHandler) createSimulationEngineForClient(clientAdapter *ClientMessageAdapter) *simulationEngine.SimulationEngine {
-	return simulationEngine.NewSimulationEngine(clientAdapter, wh.binanceService, wh.portfolioService, wh.simulationDAO)
+func (wh *WebSocketHandler) createSimulationEngineForClient(clientAdapter *ClientMessageAdapter, orderEngine trading.OrderExecutionEngineInterface) *simulationEngine.SimulationEngine {
+	return simulationEngine.NewSimulationEngine(clientAdapter, wh.binanceService, wh.portfolioService, wh.simulationDAO, wh.positionDAO, orderEngine)
 }
 
 // createOrderEngineForClient creates a new order execution engine instance for a client

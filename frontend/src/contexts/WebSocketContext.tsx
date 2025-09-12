@@ -47,7 +47,7 @@ interface WebSocketContextType {
   resetSimulationStatus: () => void;
   setHistoricalSimulationStatus: (status: SimulationStatus) => void;
   // Order methods
-  placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number) => Promise<void>;
+  placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number, type?: 'market' | 'limit', limitPrice?: number) => Promise<void>;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -386,12 +386,19 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, []);
 
   // Order methods
-  const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number) => {
-    return sendControlMessage('order_place', {
+  const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number, type: 'market' | 'limit' = 'market', limitPrice?: number) => {
+    const orderData: any = {
       symbol,
       side,
+      type,
       quantity
-    });
+    };
+    
+    if (type === 'limit' && limitPrice !== undefined) {
+      orderData.limit_price = limitPrice;
+    }
+    
+    return sendControlMessage('order_place', orderData);
   }, [sendControlMessage]);
 
   const value: WebSocketContextType = {

@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -12,7 +15,10 @@ const (
 	OrderSideBuy  OrderSide = "buy"
 	OrderSideSell OrderSide = "sell"
 	
-	OrderTypeMarket OrderType = "market"
+	OrderTypeMarket    OrderType = "market"
+	OrderTypeLimit     OrderType = "limit"
+	OrderTypeStopLimit OrderType = "stop_limit"
+	// Future order types: stop_market, take_profit, etc.
 	
 	OrderStatusPending   OrderStatus = "pending"
 	OrderStatusExecuted  OrderStatus = "executed"
@@ -20,7 +26,7 @@ const (
 	OrderStatusCancelled OrderStatus = "cancelled"
 )
 
-// Order represents a trading order
+// Order represents a trading order with flexible type-specific parameters
 type Order struct {
 	ID           uint        `json:"id" gorm:"primaryKey"`
 	UserID       uint        `json:"user_id" gorm:"index;not null;default:1"` // Default to user 1 for now
@@ -34,12 +40,124 @@ type Order struct {
 	PlacedAt     int64       `json:"placed_at" gorm:"not null"` // Simulation time in milliseconds
 	ExecutedAt   *int64      `json:"executed_at,omitempty"` // Simulation time in milliseconds
 	ExecutedPrice *float64    `json:"executed_price,omitempty"`
+	
+	// Flexible order parameters stored as JSON for different order types
+	OrderParams  OrderParameters `json:"order_params" gorm:"type:json"`
+	
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 func (Order) TableName() string {
 	return "orders"
+}
+
+// OrderParameters contains flexible parameters for different order types
+type OrderParameters struct {
+	// Limit Order Parameters
+	LimitPrice *float64 `json:"limit_price,omitempty"` // Price for limit orders
+	
+	// Stop Limit Order Parameters
+	StopPrice     *float64 `json:"stop_price,omitempty"`     // Trigger price for stop orders
+	StopLimitPrice *float64 `json:"stop_limit_price,omitempty"` // Limit price after stop is triggered
+	
+	// Take Profit / Stop Loss Parameters (future)
+	TakeProfitPrice *float64 `json:"take_profit_price,omitempty"` // Take profit trigger price
+	StopLossPrice   *float64 `json:"stop_loss_price,omitempty"`   // Stop loss trigger price
+	
+	// Time in Force Parameters (future)
+	TimeInForce   *string `json:"time_in_force,omitempty"`   // GTC, IOC, FOK, etc.
+	ExpireTime    *int64  `json:"expire_time,omitempty"`     // Expiration time in milliseconds
+	
+	// Advanced Parameters (future)
+	ReduceOnly    *bool   `json:"reduce_only,omitempty"`     // Reduce position only flag
+	PostOnly      *bool   `json:"post_only,omitempty"`       // Post-only flag for makers
+	
+	// Conditional Parameters (future)
+	ParentOrderID *uint   `json:"parent_order_id,omitempty"` // For OCO, bracket orders
+	TriggerCondition *string `json:"trigger_condition,omitempty"` // Condition for activation
+}
+
+// Scan implements the Scanner interface for GORM
+func (op *OrderParameters) Scan(value interface{}) error {
+	if value == nil {
+		*op = OrderParameters{}
+		return nil
+	}
+	
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("cannot scan %T into OrderParameters", value)
+	}
+	
+	if len(bytes) == 0 {
+		*op = OrderParameters{}
+		return nil
+	}
+	
+	return json.Unmarshal(bytes, op)
+}
+
+// Value implements the Valuer interface for GORM
+func (op OrderParameters) Value() (driver.Value, error) {
+	if op == (OrderParameters{}) {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(op)
+}
+
+// Convenience methods for accessing order parameters
+
+// GetLimitPrice returns the limit price for limit orders
+func (o *Order) GetLimitPrice() *float64 {
+	return o.OrderParams.LimitPrice
+}
+
+// SetLimitPrice sets the limit price for limit orders
+func (o *Order) SetLimitPrice(price float64) {
+	o.OrderParams.LimitPrice = &price
+}
+
+// GetStopPrice returns the stop price for stop orders
+func (o *Order) GetStopPrice() *float64 {
+	return o.OrderParams.StopPrice
+}
+
+// SetStopPrice sets the stop price for stop orders
+func (o *Order) SetStopPrice(price float64) {
+	o.OrderParams.StopPrice = &price
+}
+
+// GetStopLimitPrice returns the stop limit price for stop-limit orders
+func (o *Order) GetStopLimitPrice() *float64 {
+	return o.OrderParams.StopLimitPrice
+}
+
+// SetStopLimitPrice sets the stop limit price for stop-limit orders
+func (o *Order) SetStopLimitPrice(price float64) {
+	o.OrderParams.StopLimitPrice = &price
+}
+
+// IsLimitOrder checks if this is a limit order
+func (o *Order) IsLimitOrder() bool {
+	return o.Type == OrderTypeLimit && o.OrderParams.LimitPrice != nil
+}
+
+// IsStopOrder checks if this is a stop order (stop-limit)
+func (o *Order) IsStopOrder() bool {
+	return o.Type == OrderTypeStopLimit && o.OrderParams.StopPrice != nil
+}
+
+// GetEffectivePrice returns the relevant price for order execution
+func (o *Order) GetEffectivePrice() *float64 {
+	switch o.Type {
+	case OrderTypeLimit:
+		return o.OrderParams.LimitPrice
+	case OrderTypeStopLimit:
+		return o.OrderParams.StopLimitPrice
+	default:
+		return nil // Market orders don't have a preset price
+	}
 }
 
 // Trade represents an executed trade

@@ -11,7 +11,9 @@ interface OrderPanelProps {
 
 interface OrderState {
   side: 'buy' | 'sell';
+  type: 'market' | 'limit';
   quantity: string;
+  limitPrice: string;
   isPlacing: boolean;
   lastOrderStatus: 'success' | 'error' | null;
   lastOrderMessage: string;
@@ -25,7 +27,9 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
   const { connectionState, placeOrder, lastOrderNotification } = useWebSocketContext();
   const [orderState, setOrderState] = useState<OrderState>({
     side: 'buy',
+    type: 'market',
     quantity: '',
+    limitPrice: '',
     isPlacing: false,
     lastOrderStatus: null,
     lastOrderMessage: ''
@@ -51,11 +55,23 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     setOrderState(prev => ({ ...prev, side }));
   }, []);
 
+  const handleTypeChange = useCallback((type: 'market' | 'limit') => {
+    setOrderState(prev => ({ ...prev, type, limitPrice: type === 'market' ? '' : prev.limitPrice }));
+  }, []);
+
   const handleQuantityChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     // Allow only positive numbers with up to 8 decimal places
     if (value === '' || /^\d*\.?\d{0,8}$/.test(value)) {
       setOrderState(prev => ({ ...prev, quantity: value }));
+    }
+  }, []);
+
+  const handleLimitPriceChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Allow only positive numbers with up to 8 decimal places
+    if (value === '' || /^\d*\.?\d{0,8}$/.test(value)) {
+      setOrderState(prev => ({ ...prev, limitPrice: value }));
     }
   }, []);
 
@@ -70,16 +86,34 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       return 'Quantity too large';
     }
 
-    // Only validate order value if we have a valid current price (simulation running)
-    if (currentPrice > 0) {
-      const totalValue = quantity * currentPrice;
+    // Validate limit price for limit orders
+    if (orderState.type === 'limit') {
+      const limitPrice = parseFloat(orderState.limitPrice);
+      if (!orderState.limitPrice || isNaN(limitPrice) || limitPrice <= 0) {
+        return 'Please enter a valid limit price';
+      }
+      
+      if (limitPrice > 999999) {
+        return 'Limit price too large';
+      }
+      
+      // Check minimum order value using limit price
+      const totalValue = quantity * limitPrice;
       if (totalValue < 1) {
         return 'Order value must be at least $1';
+      }
+    } else {
+      // Only validate order value if we have a valid current price (simulation running)
+      if (currentPrice > 0) {
+        const totalValue = quantity * currentPrice;
+        if (totalValue < 1) {
+          return 'Order value must be at least $1';
+        }
       }
     }
 
     return null;
-  }, [orderState.quantity, currentPrice]);
+  }, [orderState.quantity, orderState.limitPrice, orderState.type, currentPrice]);
 
   const handlePlaceOrder = useCallback(async () => {
     const validationError = validateOrder();
@@ -101,16 +135,18 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
     try {
       const quantity = parseFloat(orderState.quantity);
+      const limitPrice = orderState.type === 'limit' ? parseFloat(orderState.limitPrice) : undefined;
       
       // Send order via WebSocket context
-      await placeOrder(symbol, orderState.side, quantity);
+      await placeOrder(symbol, orderState.side, quantity, orderState.type, limitPrice);
 
       // Reset form on successful send
       setOrderState(prev => ({
         ...prev,
         quantity: '',
+        limitPrice: orderState.type === 'market' ? '' : prev.limitPrice,
         lastOrderStatus: 'success',
-        lastOrderMessage: `${orderState.side.toUpperCase()} order for ${quantity} ${symbol} sent`
+        lastOrderMessage: `${orderState.type.toUpperCase()} ${orderState.side.toUpperCase()} order for ${quantity} ${symbol} sent`
       }));
 
     } catch (error) {
@@ -131,8 +167,12 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
   }, [handlePlaceOrder, isDisabled]);
 
+  const effectivePrice = orderState.type === 'limit' && orderState.limitPrice 
+    ? parseFloat(orderState.limitPrice) 
+    : currentPrice;
+
   const estimatedTotal = orderState.quantity && !isNaN(parseFloat(orderState.quantity)) 
-    ? parseFloat(orderState.quantity) * currentPrice 
+    ? parseFloat(orderState.quantity) * effectivePrice 
     : 0;
 
   const fee = estimatedTotal * 0.001; // 0.1% fee
@@ -199,6 +239,50 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         </button>
       </div>
 
+      {/* Order Type Toggle */}
+      <div style={{
+        display: 'flex',
+        marginBottom: '15px',
+        border: '1px solid #dee2e6',
+        borderRadius: '6px',
+        overflow: 'hidden'
+      }}>
+        <button
+          onClick={() => handleTypeChange('market')}
+          disabled={isDisabled}
+          style={{
+            flex: 1,
+            padding: '8px',
+            border: 'none',
+            backgroundColor: orderState.type === 'market' ? '#007bff' : '#f8f9fa',
+            color: orderState.type === 'market' ? 'white' : '#6c757d',
+            fontWeight: orderState.type === 'market' ? 'bold' : 'normal',
+            cursor: isDisabled ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+            transition: 'all 0.2s'
+          }}
+        >
+          MARKET
+        </button>
+        <button
+          onClick={() => handleTypeChange('limit')}
+          disabled={isDisabled}
+          style={{
+            flex: 1,
+            padding: '8px',
+            border: 'none',
+            backgroundColor: orderState.type === 'limit' ? '#007bff' : '#f8f9fa',
+            color: orderState.type === 'limit' ? 'white' : '#6c757d',
+            fontWeight: orderState.type === 'limit' ? 'bold' : 'normal',
+            cursor: isDisabled ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+            transition: 'all 0.2s'
+          }}
+        >
+          LIMIT
+        </button>
+      </div>
+
       {/* Quantity Input */}
       <div style={{ marginBottom: '15px' }}>
         <label style={{
@@ -229,6 +313,38 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         />
       </div>
 
+      {/* Limit Price Input - Only show for limit orders */}
+      {orderState.type === 'limit' && (
+        <div style={{ marginBottom: '15px' }}>
+          <label style={{
+            display: 'block',
+            marginBottom: '5px',
+            fontSize: '14px',
+            fontWeight: '500',
+            color: '#495057'
+          }}>
+            Limit Price
+          </label>
+          <input
+            type="text"
+            value={orderState.limitPrice}
+            onChange={handleLimitPriceChange}
+            onKeyPress={handleKeyPress}
+            disabled={isDisabled}
+            placeholder="0.00000000"
+            style={{
+              width: '100%',
+              padding: '10px',
+              border: '1px solid #dee2e6',
+              borderRadius: '6px',
+              fontSize: '14px',
+              boxSizing: 'border-box',
+              backgroundColor: isDisabled ? '#f8f9fa' : 'white'
+            }}
+          />
+        </div>
+      )}
+
       {/* Price Display */}
       <div style={{ marginBottom: '15px' }}>
         <div style={{
@@ -239,9 +355,23 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           fontSize: '14px',
           color: '#6c757d'
         }}>
-          <span>Price:</span>
+          <span>{orderState.type === 'limit' ? 'Market Price:' : 'Price:'}</span>
           <span>{formatCurrency(currentPrice)}</span>
         </div>
+        {orderState.type === 'limit' && orderState.limitPrice && !isNaN(parseFloat(orderState.limitPrice)) && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '8px 0',
+            fontSize: '14px',
+            color: '#495057',
+            fontWeight: '500'
+          }}>
+            <span>Limit Price:</span>
+            <span>{formatCurrency(parseFloat(orderState.limitPrice))}</span>
+          </div>
+        )}
       </div>
 
       {/* Order Summary */}

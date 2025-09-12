@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
 import PositionsList from './PositionsList';
 import OrderHistory from './OrderHistory';
+import PendingOrders from './PendingOrders';
 import TradeHistory from './TradeHistory';
 import SimulationHistory from './SimulationHistory';
 
@@ -13,7 +14,7 @@ interface TradingTabsProps {
   onLoadFromHistory?: (simulation: any) => void;
 }
 
-type TabType = 'positions' | 'orders' | 'trades' | 'history';
+type TabType = 'positions' | 'orders' | 'pending' | 'trades' | 'history';
 
 const TradingTabs: React.FC<TradingTabsProps> = ({ 
   connectionState, 
@@ -27,6 +28,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
   // Refs to store refresh functions from child components
   const positionsRefreshRef = React.useRef<(() => void) | null>(null);
   const ordersRefreshRef = React.useRef<(() => void) | null>(null);
+  const pendingRefreshRef = React.useRef<(() => void) | null>(null);
   const tradesRefreshRef = React.useRef<(() => void) | null>(null);
   const historyRefreshRef = React.useRef<(() => void) | null>(null);
 
@@ -48,6 +50,11 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
             ordersRefreshRef.current();
           }
           break;
+        case 'pending':
+          if (pendingRefreshRef.current) {
+            pendingRefreshRef.current();
+          }
+          break;
         case 'trades':
           if (tradesRefreshRef.current) {
             tradesRefreshRef.current();
@@ -62,6 +69,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
   const tabs: { id: TabType; label: string }[] = [
     { id: 'positions', label: 'Positions' },
     { id: 'orders', label: 'Order History' },
+    { id: 'pending', label: 'Pending Orders' },
     { id: 'trades', label: 'Trade History' },
     { id: 'history', label: 'Simulation History' }
   ];
@@ -79,6 +87,13 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
             connectionState={connectionState}
             simulationState={simulationState}
             onRefreshReady={(refreshFn) => ordersRefreshRef.current = refreshFn}
+          />
+        </div>
+        <div style={{ display: activeTab === 'pending' ? 'block' : 'none' }}>
+          <PendingOrders
+            connectionState={connectionState}
+            simulationState={simulationState}
+            onRefreshReady={(refreshFn) => pendingRefreshRef.current = refreshFn}
           />
         </div>
         <div style={{ display: activeTab === 'trades' ? 'block' : 'none' }}>

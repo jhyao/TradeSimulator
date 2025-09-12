@@ -8,7 +8,7 @@ import (
 	"time"
 
 	simulationDAO "tradesimulator/internal/dao/simulation"
-	"tradesimulator/internal/database"
+	tradingDAO "tradesimulator/internal/dao/trading"
 	"tradesimulator/internal/integrations/binance"
 	"tradesimulator/internal/models"
 	"tradesimulator/internal/services"
@@ -68,6 +68,13 @@ type SimulationEngine struct {
 	currentSimulationID uint                                 // Current simulation record ID
 	simulationDAO       simulationDAO.SimulationDAOInterface // DAO for managing simulation records
 	portfolioService    *services.PortfolioService           // Service for portfolio operations
+	positionDAO         tradingDAO.PositionDAOInterface      // DAO for managing positions
+
+	// Order execution integration
+	orderExecutionEngine interface {
+		ProcessPriceUpdate(symbol string, currentPrice float64, simulationTime int64) ([]*models.Trade, error)
+		LoadPendingOrders(simulationID uint) error
+	} // Order execution engine for processing limit orders
 }
 
 type SimulationUpdateData struct {
@@ -94,24 +101,29 @@ type SimulationStatus struct {
 	Message          string  `json:"message"`
 }
 
-func NewSimulationEngine(client ClientMessageSender, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface) *SimulationEngine {
+func NewSimulationEngine(client ClientMessageSender, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface, positionDAO tradingDAO.PositionDAOInterface, orderEngine interface {
+	ProcessPriceUpdate(symbol string, currentPrice float64, simulationTime int64) ([]*models.Trade, error)
+	LoadPendingOrders(simulationID uint) error
+}) *SimulationEngine {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &SimulationEngine{
-		state:               StateStopped,
-		speed:               1,
-		client:              client,
-		stopChan:            make(chan struct{}),
-		ctx:                 ctx,
-		cancel:              cancel,
-		binanceService:      binanceService,
-		speedChangeChan:     make(chan int, 1),
-		timeframeChangeChan: make(chan string, 1),
-		dataLoadThreshold:   0.8,  // Load more data when 80% consumed
-		maxBufferSize:       5000, // Keep max 5000 candles in memory
-		dataLoadChan:        make(chan bool, 1),
-		simulationDAO:       simDAO,
-		portfolioService:    portfolioService,
+		state:                StateStopped,
+		speed:                1,
+		client:               client,
+		stopChan:             make(chan struct{}),
+		ctx:                  ctx,
+		cancel:               cancel,
+		binanceService:       binanceService,
+		speedChangeChan:      make(chan int, 1),
+		timeframeChangeChan:  make(chan string, 1),
+		dataLoadThreshold:    0.8,  // Load more data when 80% consumed
+		maxBufferSize:        5000, // Keep max 5000 candles in memory
+		dataLoadChan:         make(chan bool, 1),
+		simulationDAO:        simDAO,
+		portfolioService:     portfolioService,
+		positionDAO:          positionDAO,
+		orderExecutionEngine: orderEngine,
 	}
 }
 
@@ -187,10 +199,18 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 
 	// Create initial USDT position for the simulation (use user ID 1 as default for simulation)
 	if initialFunding > 0 {
-		if err := se.createInitialUSDTPosition(1, &simulationRecord.ID, initialFunding); err != nil {
+		if err := se.positionDAO.CreateInitialUSDTPosition(1, &simulationRecord.ID, initialFunding); err != nil {
 			return fmt.Errorf("failed to create initial USDT position: %w", err)
 		}
 		log.Printf("Created initial USDT position with funding: $%.2f", initialFunding)
+	}
+
+	// Load pending limit orders into order execution engine
+	if se.orderExecutionEngine != nil {
+		if err := se.orderExecutionEngine.LoadPendingOrders(simulationRecord.ID); err != nil {
+			log.Printf("Failed to load pending orders for new simulation: %v", err)
+			// Don't fail simulation start if order loading fails
+		}
 	}
 
 	// Initialize continuous data loading state
@@ -342,6 +362,16 @@ func (se *SimulationEngine) processNextBaseUpdate() bool {
 			// Update current price and price time
 			se.currentPrice = baseCandle.Close
 			se.currentPriceTime = baseCandle.EndTime
+
+			// Process limit orders at the new price (before sending to client)
+			if se.orderExecutionEngine != nil {
+				if trades, err := se.orderExecutionEngine.ProcessPriceUpdate(se.symbol, se.currentPrice, se.currentPriceTime); err != nil {
+					log.Printf("Error processing limit orders at price %.8f: %v", se.currentPrice, err)
+				} else if len(trades) > 0 {
+					log.Printf("Processed %d limit order executions at price %.8f", len(trades), se.currentPrice)
+				}
+			}
+
 			// Send this base candle to client
 			se.sendBaseCandle(baseCandle)
 			se.currentIndex++
@@ -794,25 +824,6 @@ func (se *SimulationEngine) Cleanup() {
 	log.Printf("Simulation engine cleanup completed")
 }
 
-// createInitialUSDTPosition creates an initial USDT position for a simulation
-func (se *SimulationEngine) createInitialUSDTPosition(userID uint, simulationID *uint, initialFunding float64) error {
-	position := &models.Position{
-		UserID:       userID,
-		SimulationID: simulationID,
-		Symbol:       "USDT",
-		BaseCurrency: "USDT",
-		Quantity:     initialFunding,
-		AveragePrice: 1.0, // USDT always has price = 1
-		TotalCost:    initialFunding,
-	}
-
-	if err := database.DB.Create(position).Error; err != nil {
-		return fmt.Errorf("failed to create initial USDT position: %w", err)
-	}
-
-	return nil
-}
-
 // updateSimulationStatusWithPortfolioValue updates simulation status with current portfolio value calculation
 func (se *SimulationEngine) updateSimulationStatusWithPortfolioValue(status models.SimulationStatus) {
 	if se.currentSimulationID == 0 {
@@ -1085,6 +1096,14 @@ func (se *SimulationEngine) ResumeStopped(simulationID uint, speed int, interval
 	se.isLoadingData = false
 	se.noMoreDataAvailable = false
 	se.lastDataLoadTime = baseDataset[len(baseDataset)-1].StartTime
+
+	// Load pending limit orders into order execution engine
+	if se.orderExecutionEngine != nil {
+		if err := se.orderExecutionEngine.LoadPendingOrders(simulationID); err != nil {
+			log.Printf("Failed to load pending orders for resumed simulation: %v", err)
+			// Don't fail simulation resume if order loading fails
+		}
+	}
 
 	// Update state to playing
 	se.state = StatePlaying

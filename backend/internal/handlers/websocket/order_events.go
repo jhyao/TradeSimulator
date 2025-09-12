@@ -10,9 +10,11 @@ import (
 
 // Order control message structures
 type OrderPlaceData struct {
-	Symbol   string  `json:"symbol"`
-	Side     string  `json:"side"` // "buy" or "sell"
-	Quantity float64 `json:"quantity"`
+	Symbol     string   `json:"symbol"`
+	Side       string   `json:"side"` // "buy" or "sell"
+	Type       string   `json:"type"` // "market" or "limit"
+	Quantity   float64  `json:"quantity"`
+	LimitPrice *float64 `json:"limit_price,omitempty"` // Required for limit orders
 }
 
 type OrderControlResponse struct {
@@ -71,6 +73,27 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		return nil
 	}
 
+	// Validate order type and limit price
+	orderType := orderData.Type
+	if orderType == "" {
+		orderType = "market" // Default to market order for backward compatibility
+	}
+
+	if orderType != "market" && orderType != "limit" {
+		client.SendError("Invalid order type", "Type must be 'market' or 'limit'")
+		return nil
+	}
+
+	if orderType == "limit" && orderData.LimitPrice == nil {
+		client.SendError("Missing limit price", "Limit price is required for limit orders")
+		return nil
+	}
+
+	if orderType == "limit" && *orderData.LimitPrice <= 0 {
+		client.SendError("Invalid limit price", "Limit price must be positive")
+		return nil
+	}
+
 	// Check if simulation is running and get current data
 	status := client.SimulationEngine.GetStatus()
 	if !status.IsRunning {
@@ -84,7 +107,18 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 	}
 
 	// Place the order using the client's order execution engine (using default user ID 1 for now)
-	order, trade, err := client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
+	var order *models.Order
+	var trade *models.Trade
+	var err error
+
+	if orderType == "market" {
+		order, trade, err = client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
+	} else if orderType == "limit" {
+		order, err = client.OrderEngine.PlaceLimitOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, *orderData.LimitPrice, status.SimulationTime)
+		// Limit orders don't have immediate trades, they are placed as pending
+		trade = nil
+	}
+
 	if err != nil {
 		client.SendError("Failed to place order", err.Error())
 		return nil
