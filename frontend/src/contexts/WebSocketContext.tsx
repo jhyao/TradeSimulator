@@ -40,7 +40,7 @@ interface WebSocketContextType {
   startSimulation: (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => Promise<void>;
   stopSimulation: () => Promise<void>;
   pauseSimulation: () => Promise<void>;
-  resumeSimulation: () => Promise<void>;
+  resumeSimulation: (simulationId?: number, speed?: number, interval?: string) => Promise<void>;
   setSpeed: (speed: number) => Promise<void>;
   setTimeframe: (timeframe: string) => Promise<void>;
   getStatus: () => Promise<any>;
@@ -289,9 +289,35 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     return sendControlMessage('simulation_control_pause');
   }, [sendControlMessage]);
 
-  const resumeSimulation = React.useCallback(async () => {
-    return sendControlMessage('simulation_control_resume');
-  }, [sendControlMessage]);
+  const resumeSimulation = React.useCallback(async (simulationId?: number, speed?: number, interval?: string) => {
+    // For resume from stopped state, we need to reconnect first
+    // Check if we're currently disconnected (which happens after stop)
+    if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+      console.log('WebSocket disconnected, reconnecting for resume...');
+      
+      // Establish connection first
+      connect();
+      
+      // Wait for connection to be established
+      let attempts = 0;
+      const maxAttempts = 50; // 5 seconds with 100ms intervals
+      
+      while (attempts < maxAttempts && (connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      
+      if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
+        throw new Error('Failed to establish websocket connection for resume within timeout');
+      }
+    }
+
+    // Prepare resume data - include simulation ID, speed, and interval if resuming from stopped state
+    const resumeData = simulationId ? { simulationId, speed, interval } : undefined;
+
+    // Now send the resume command (works for both paused→playing and stopped→playing)
+    return sendControlMessage('simulation_control_resume', resumeData);
+  }, [sendControlMessage, connect]);
 
   const setSpeed = React.useCallback(async (speed: number) => {
     // Only send if connection is established

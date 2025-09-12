@@ -57,12 +57,12 @@ type SimulationEngine struct {
 	timeframeChangeChan chan string // For dynamic timeframe changes
 
 	// Continuous data loading
-	dataLoadThreshold float64   // Threshold (0.0-1.0) to trigger data loading
-	maxBufferSize     int       // Maximum number of candles to keep in memory
-	isLoadingData     bool      // Flag to prevent concurrent loading
-	dataLoadChan      chan bool // Channel to signal successful data load
-	lastDataLoadTime  int64     // Last timestamp of loaded data in milliseconds
-	noMoreDataAvailable bool    // Flag to indicate no more historical data is available
+	dataLoadThreshold   float64   // Threshold (0.0-1.0) to trigger data loading
+	maxBufferSize       int       // Maximum number of candles to keep in memory
+	isLoadingData       bool      // Flag to prevent concurrent loading
+	dataLoadChan        chan bool // Channel to signal successful data load
+	lastDataLoadTime    int64     // Last timestamp of loaded data in milliseconds
+	noMoreDataAvailable bool      // Flag to indicate no more historical data is available
 
 	// Simulation record integration
 	currentSimulationID uint                                 // Current simulation record ID
@@ -566,12 +566,13 @@ func (se *SimulationEngine) Resume() error {
 		return fmt.Errorf("simulation not paused")
 	}
 
+	// Handle normal resume from paused state
 	se.state = StatePlaying
 
 	// Update simulation record status
 	se.updateSimulationStatus(models.SimulationStatusRunning)
 
-	log.Printf("Simulation resumed at index %d", se.currentIndex)
+	log.Printf("Simulation resumed from paused at index %d", se.currentIndex)
 	se.sendStatusUpdateUnsafe("Simulation resumed")
 	return nil
 }
@@ -1013,4 +1014,90 @@ func (se *SimulationEngine) checkDataLoadingNeeded() {
 		}()
 	}
 
+}
+
+// ResumeStopped handles resuming a specific simulation with parameters (for resume from stopped state)
+// If speed or interval are 0/"", they will be loaded from the simulation record
+func (se *SimulationEngine) ResumeStopped(simulationID uint, speed int, interval string) error {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+
+	if se.state != StateStopped {
+		return fmt.Errorf("simulation not stopped - cannot resume")
+	}
+
+	if simulationID == 0 {
+		return fmt.Errorf("no simulation ID available for resume")
+	}
+
+	// Get simulation record to retrieve end_sim_time and other params
+	simulationRecord, err := se.simulationDAO.GetSimulationByID(simulationID)
+	if err != nil {
+		return fmt.Errorf("failed to get simulation record: %w", err)
+	}
+
+	if simulationRecord.EndSimTime == 0 {
+		return fmt.Errorf("simulation has no end time recorded")
+	}
+
+	// Set simulation parameters
+	se.currentSimulationID = simulationID
+	se.symbol = simulationRecord.Symbol
+
+	// Use provided speed/interval, or fall back to simulation record if not provided
+	if speed > 0 {
+		se.speed = speed
+	} else {
+		// Extract speed from simulation record's extra config if available
+		se.speed = 60 // Default fallback
+	}
+
+	if interval != "" {
+		se.interval = interval
+	} else {
+		// Extract interval from simulation record if available, fallback to 1h
+		se.interval = "1h"
+	}
+
+	// Recalculate base interval and ticker based on speed
+	se.baseInterval = se.getOptimalBaseInterval()
+	se.tickerInterval = se.getOptimalTickerInterval()
+
+	// Use end_sim_time as the new currentPriceTime
+	se.currentPriceTime = simulationRecord.EndSimTime
+	se.currentSimTime = simulationRecord.EndSimTime
+
+	// Load historical data from the end time
+	baseDataset, err := se.loadHistoricalDataset(se.symbol, se.baseInterval, simulationRecord.EndSimTime)
+	if err != nil {
+		return fmt.Errorf("failed to load historical data for resume: %w", err)
+	}
+
+	if len(baseDataset) == 0 {
+		return fmt.Errorf("no historical data available from resume time")
+	}
+
+	// Set new base dataset
+	se.baseDataset = baseDataset
+	se.currentIndex = 0 // Start from beginning of new dataset
+
+	// Reset data loading state
+	se.isLoadingData = false
+	se.noMoreDataAvailable = false
+	se.lastDataLoadTime = baseDataset[len(baseDataset)-1].StartTime
+
+	// Update state to playing
+	se.state = StatePlaying
+
+	// Update simulation record status
+	se.updateSimulationStatus(models.SimulationStatusRunning)
+
+	log.Printf("Simulation resumed from stopped state: ID=%d, time=%d, candles=%d, speed=%dx, interval=%s",
+		simulationID, se.currentPriceTime, len(baseDataset), se.speed, se.interval)
+	se.sendStatusUpdateUnsafe("Simulation resumed from stopped")
+
+	// Start the simulation goroutine
+	go se.runSimulation()
+
+	return nil
 }

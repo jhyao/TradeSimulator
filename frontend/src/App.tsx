@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Chart from './components/Chart';
 import StartTimeSelector from './components/StartTimeSelector';
 import SimulationControls from './components/SimulationControls';
@@ -45,6 +45,15 @@ function AppContent() {
     lastCandle: null
   });
 
+  // State to track last simulation parameters for resume validation
+  const [lastSimulationParams, setLastSimulationParams] = useState<{
+    symbol: string;
+    startTime: Date | null;
+    initialFunding: number;
+    endSimTime: number | null;
+    simulationId: number | null;
+  } | null>(null);
+
   const { 
     lastSimulationUpdate,
     currentSimulationStatus,
@@ -90,6 +99,15 @@ function AppContent() {
     }
   }, [currentSimulationStatus]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (speedChangeTimeoutRef.current) {
+        clearTimeout(speedChangeTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleStartTimeSelected = useCallback((startTime: Date) => {
     setSelectedStartTime(startTime);
     
@@ -126,7 +144,10 @@ function AppContent() {
   const handleStartSimulation = useCallback(async () => {
     if (!selectedStartTime) return;
 
-    // Clear previous simulation status before starting new one
+    // Always clear resume state when starting a new simulation
+    setLastSimulationParams(null);
+
+    // Clear previous simulation status before starting
     resetSimulationStatus();
 
     try {
@@ -160,51 +181,117 @@ function AppContent() {
 
   const handleResumeSimulation = useCallback(async () => {
     try {
-      await wsResumeSimulation();
+      if (simulationState.state === 'stopped') {
+        // Resume from stopped state - pass simulation ID and current UI speed/interval
+        const simulationId = lastSimulationParams?.simulationId;
+        if (!simulationId) {
+          console.error('No simulation ID available for resume from stopped state');
+          return;
+        }
+        const speed = simulationState.speed; // Use current UI speed
+        const interval = timeframe; // Use current UI interval
+        await wsResumeSimulation(simulationId, speed, interval);
+      } else {
+        // Normal resume from paused state - no data needed
+        await wsResumeSimulation();
+      }
       setSimulationState(prev => ({ ...prev, state: 'playing' }));
     } catch (error) {
       console.error('Failed to resume simulation:', error);
     }
-  }, [wsResumeSimulation]);
+  }, [wsResumeSimulation, lastSimulationParams, simulationState.state, simulationState.speed, timeframe]);
 
   const handleStopSimulation = useCallback(async () => {
     try {
       await wsStopSimulation();
+      
+      // Store simulation params for potential resume (only core params - speed/interval are adjustable)
+      if (currentSimulationStatus) {
+        setLastSimulationParams({
+          symbol,
+          startTime: selectedStartTime,
+          initialFunding,
+          endSimTime: currentSimulationStatus.currentPriceTime || Date.now(),
+          simulationId: currentSimulationStatus.simulationID || null
+        });
+      }
+
       setSimulationState(prev => ({
         ...prev,
         state: 'stopped',
         progress: 0
-        // Keep simulationTime, startTime, and lastCandle to show final state
       }));
     } catch (error) {
       console.error('Failed to stop simulation:', error);
     }
-  }, [wsStopSimulation]);
+  }, [wsStopSimulation, currentSimulationStatus, symbol, selectedStartTime, initialFunding]);
+
+
+  // Debounce timer for speed changes
+  const speedChangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleSpeedChange = useCallback(async (speed: number) => {
-    try {
-      await wsSetSpeed(speed);
-      setSimulationState(prev => ({ ...prev, speed }));
-      
-      // Check if current timeframe is still valid with new speed
-      if (!isTimeframeAllowed(timeframe, speed)) {
-        const minAllowedTimeframe = getMinAllowedTimeframe(speed);
-        console.log(`Speed change to ${speed}x makes current timeframe ${timeframe} invalid. Auto-switching to ${minAllowedTimeframe}`);
-        
-        // Auto-adjust timeframe to minimum allowed
-        try {
-          await handleTimeframeChange(minAllowedTimeframe);
-        } catch (timeframeError) {
-          console.error('Failed to auto-adjust timeframe:', timeframeError);
-          // Don't alert here as the speed change itself succeeded
-        }
-      }
-    } catch (error) {
-      console.error('Failed to change speed:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`Failed to change speed: ${errorMessage}`);
+    // Update UI immediately for responsiveness
+    setSimulationState(prev => ({ ...prev, speed }));
+    
+    // Clear existing timeout
+    if (speedChangeTimeoutRef.current) {
+      clearTimeout(speedChangeTimeoutRef.current);
     }
+    
+    // Debounce the actual WebSocket call
+    speedChangeTimeoutRef.current = setTimeout(async () => {
+      try {
+        await wsSetSpeed(speed);
+        
+        // Check if current timeframe is still valid with new speed
+        if (!isTimeframeAllowed(timeframe, speed)) {
+          const minAllowedTimeframe = getMinAllowedTimeframe(speed);
+          console.log(`Speed change to ${speed}x makes current timeframe ${timeframe} invalid. Auto-switching to ${minAllowedTimeframe}`);
+          
+          // Auto-adjust timeframe to minimum allowed
+          try {
+            await handleTimeframeChange(minAllowedTimeframe);
+          } catch (timeframeError) {
+            console.error('Failed to auto-adjust timeframe:', timeframeError);
+            // Don't alert here as the speed change itself succeeded
+          }
+        }
+      } catch (error) {
+        console.error('Failed to change speed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error(`Failed to change speed: ${errorMessage}`);
+      }
+    }, 300); // 300ms delay
   }, [timeframe, handleTimeframeChange, wsSetSpeed]);
+
+  // Resume validation logic
+  const canResume = useCallback(() => {
+    if (!lastSimulationParams || simulationState.state !== 'stopped') {
+      return false;
+    }
+
+    // Check if current params match last simulation params (only core params - speed/interval are adjustable)
+    const paramsMatch = 
+      symbol === lastSimulationParams.symbol &&
+      selectedStartTime?.getTime() === lastSimulationParams.startTime?.getTime() &&
+      initialFunding === lastSimulationParams.initialFunding;
+
+    if (!paramsMatch) {
+      return false;
+    }
+
+    // Check if enough future data is available (at least 5 minutes at current speed)
+    if (lastSimulationParams.endSimTime) {
+      const currentTime = Date.now();
+      const minRequiredMs = simulationState.speed * 300 * 1000; // 5 minutes in ms at current speed
+      const timeSinceEnd = currentTime - lastSimulationParams.endSimTime;
+      return timeSinceEnd >= minRequiredMs;
+    }
+
+    return false;
+  }, [lastSimulationParams, simulationState.state, simulationState.speed, symbol, selectedStartTime, initialFunding]);
+
 
   return (
     <div className="App">
@@ -326,6 +413,7 @@ function AppContent() {
               currentSpeed={simulationState.speed}
               symbol={symbol}
               blockType="speed"
+              canResume={canResume()}
             />
           </div>
           
@@ -348,6 +436,7 @@ function AppContent() {
               currentSpeed={simulationState.speed}
               symbol={symbol}
               blockType="controls"
+              canResume={canResume()}
             />
           </div>
         </div>

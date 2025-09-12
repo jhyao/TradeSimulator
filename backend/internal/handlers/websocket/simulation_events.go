@@ -49,7 +49,7 @@ func (h *SimulationEventHandlerImpl) HandleMessage(client *Client, message types
 	case types.SimulationPause:
 		return h.handlePause(client)
 	case types.SimulationResume:
-		return h.handleResume(client)
+		return h.handleResume(client, message.Data)
 	case types.SimulationSetSpeed:
 		return h.handleSetSpeed(client, message.Data)
 	case types.SimulationSetTimeframe:
@@ -57,7 +57,7 @@ func (h *SimulationEventHandlerImpl) HandleMessage(client *Client, message types
 	case types.SimulationGetStatus:
 		return h.handleGetStatus(client)
 	default:
-		client.SendError("Unknown simulation message", "Unknown message type " + string(message.Type))
+		client.SendError("Unknown simulation message", "Unknown message type "+string(message.Type))
 		return nil
 	}
 }
@@ -105,8 +105,29 @@ func (h *SimulationEventHandlerImpl) handlePause(client *Client) error {
 	return nil
 }
 
+type SimulationResumeData struct {
+	SimulationID uint   `json:"simulationId,omitempty"`
+	Speed        int    `json:"speed,omitempty"`
+	Interval     string `json:"interval,omitempty"`
+}
+
 // handleResume handles simulation resume requests
-func (h *SimulationEventHandlerImpl) handleResume(client *Client) error {
+func (h *SimulationEventHandlerImpl) handleResume(client *Client, data interface{}) error {
+	// Handle case where data is provided (for resume from stopped with simulation ID)
+	if data != nil {
+		dataBytes, _ := json.Marshal(data)
+		var resumeData SimulationResumeData
+		if err := json.Unmarshal(dataBytes, &resumeData); err == nil && resumeData.SimulationID != 0 {
+			// Resume with specific simulation ID (from stopped state)
+			if err := client.SimulationEngine.ResumeStopped(resumeData.SimulationID, resumeData.Speed, resumeData.Interval); err != nil {
+				client.SendError("Failed to resume simulation", err.Error())
+				return nil
+			}
+			return nil
+		}
+	}
+
+	// Normal resume (from paused state) - no simulation ID needed
 	if err := client.SimulationEngine.Resume(); err != nil {
 		client.SendError("Failed to resume simulation", err.Error())
 		return nil
@@ -155,4 +176,3 @@ func (h *SimulationEventHandlerImpl) handleGetStatus(client *Client) error {
 	client.SimulationEngine.SendStatusUpdate("")
 	return nil
 }
-

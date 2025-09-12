@@ -37,6 +37,7 @@ interface SimulationControlsProps {
   currentSpeed: number;
   symbol?: string;
   blockType?: 'speed' | 'controls' | 'timeframe';
+  canResume?: boolean;
 }
 
 const SimulationControls: React.FC<SimulationControlsProps> = ({
@@ -49,13 +50,13 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   simulationState,
   currentSpeed,
   symbol = 'BTCUSDT',
-  blockType
+  blockType,
+  canResume = false
 }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const canStart = selectedStartTime && simulationState === 'stopped';
   const isPlaying = simulationState === 'playing';
-  const isPaused = simulationState === 'paused';
 
   const handleStart = async () => {
     setIsLoading(true);
@@ -170,25 +171,71 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
 
   // Controls Block  
   if (blockType === 'controls') {
+    // When stopped, show "Start New" + "Resume" buttons
+    if (simulationState === 'stopped') {
+      return (
+        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px', height: '100%', justifyContent: 'center' }}>
+          {/* Start New Button */}
+          <button
+            onClick={handleStart}
+            disabled={!canStart || isLoading}
+            style={{
+              padding: '12px 16px',
+              fontSize: '14px',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: !canStart || isLoading ? 'not-allowed' : 'pointer',
+              backgroundColor: canStart ? '#007bff' : '#ccc',
+              color: 'white',
+              fontWeight: '600',
+              width: '100%',
+              transition: 'all 0.2s',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              flex: 1
+            }}
+          >
+            {isLoading ? 'Loading...' : '🆕 Start New'}
+          </button>
+
+          {/* Resume Button */}
+          <button
+            onClick={handleResume}
+            disabled={!canResume || isLoading}
+            style={{
+              padding: '12px 16px',
+              fontSize: '14px',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: !canResume || isLoading ? 'not-allowed' : 'pointer',
+              backgroundColor: canResume ? '#28a745' : '#ccc',
+              color: 'white',
+              fontWeight: '600',
+              width: '100%',
+              transition: 'all 0.2s',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              flex: 1
+            }}
+          >
+            {isLoading ? 'Loading...' : '▶️ Resume'}
+          </button>
+        </div>
+      );
+    }
+
+    // When playing or paused, show normal controls
     return (
       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px', height: '100%', justifyContent: 'center' }}>
         {/* Main Control Button */}
         <button
-          onClick={isPlaying ? handlePause : isPaused ? handleResume : handleStart}
-          disabled={(!canStart && simulationState === 'stopped') || isLoading}
+          onClick={isPlaying ? handlePause : handleResume}
+          disabled={isLoading}
           style={{
             padding: '12px 16px',
             fontSize: '14px',
             border: 'none',
             borderRadius: '5px',
-            cursor: (!canStart && simulationState === 'stopped') || isLoading ? 'not-allowed' : 'pointer',
-            backgroundColor: isPlaying 
-              ? '#ffc107' 
-              : isPaused 
-                ? '#28a745' 
-                : canStart 
-                  ? '#007bff' 
-                  : '#ccc',
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            backgroundColor: isPlaying ? '#ffc107' : '#28a745',
             color: 'white',
             fontWeight: '600',
             width: '100%',
@@ -198,22 +245,20 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           }}
         >
           {isLoading ? 'Loading...' : 
-           isPlaying ? '⏸️ Pause' : 
-           isPaused ? '▶️ Resume' : 
-           '▶️ Start'}
+           isPlaying ? '⏸️ Pause' : '▶️ Resume'}
         </button>
 
         {/* Stop Button */}
         <button
           onClick={handleStop}
-          disabled={simulationState === 'stopped' || isLoading}
+          disabled={isLoading}
           style={{
             padding: '12px 16px',
             fontSize: '14px',
             border: 'none',
             borderRadius: '5px',
-            cursor: simulationState === 'stopped' || isLoading ? 'not-allowed' : 'pointer',
-            backgroundColor: simulationState === 'stopped' ? '#ccc' : '#dc3545',
+            cursor: isLoading ? 'not-allowed' : 'pointer',
+            backgroundColor: '#dc3545',
             color: 'white',
             fontWeight: '600',
             width: '100%',
