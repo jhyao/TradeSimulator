@@ -66,7 +66,8 @@ function AppContent() {
     resumeSimulation: wsResumeSimulation,
     setSpeed: wsSetSpeed,
     setTimeframe: wsSetTimeframe,
-    resetSimulationStatus
+    resetSimulationStatus,
+    setHistoricalSimulationStatus
   } = useWebSocketContext();
 
   // No need to sync on connection - backend sends status_update when simulation starts
@@ -226,6 +227,51 @@ function AppContent() {
     }
   }, [wsStopSimulation, currentSimulationStatus, symbol, selectedStartTime, initialFunding]);
 
+  // Load simulation from history
+  const loadFromHistory = useCallback((historicalSimulation: any) => {
+    console.log('Loading simulation from history:', historicalSimulation);
+
+    // 1. Update UI params
+    setSymbol(historicalSimulation.symbol);
+    setSelectedStartTime(new Date(historicalSimulation.start_sim_time));
+    setInitialFunding(historicalSimulation.initial_funding);
+    
+    // 2. Update simulation state with historical time
+    setSimulationState(prev => ({
+      ...prev,
+      state: 'stopped',
+      simulationTime: historicalSimulation.end_sim_time,
+      startTime: historicalSimulation.start_sim_time,
+      lastCandle: null // Will be loaded from chart
+    }));
+    
+    // 3. Set simulation status to trigger all data loading (positions, orders, trades, chart markers)
+    setHistoricalSimulationStatus({
+      state: 'stopped',
+      symbol: historicalSimulation.symbol,
+      interval: '1h', // Default, will be updated if needed
+      speed: 60, // Default speed
+      progress: 100, // Historical simulation is complete
+      startTime: historicalSimulation.start_sim_time.toString(),
+      currentPriceTime: historicalSimulation.end_sim_time,
+      currentPrice: 0, // Will be updated from chart data
+      simulationID: historicalSimulation.id,
+      isRunning: false,
+      simulationTime: historicalSimulation.end_sim_time
+    });
+    
+    // 4. Update last simulation params for resume capability
+    setLastSimulationParams({
+      symbol: historicalSimulation.symbol,
+      startTime: new Date(historicalSimulation.start_sim_time),
+      initialFunding: historicalSimulation.initial_funding,
+      endSimTime: historicalSimulation.end_sim_time,
+      simulationId: historicalSimulation.id
+    });
+
+    console.log('Historical simulation loaded successfully');
+  }, [setHistoricalSimulationStatus]);
+
 
   // Debounce timer for speed changes
   const speedChangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -351,6 +397,7 @@ function AppContent() {
               symbol={symbol}
               compact={true}
               disabled={simulationState.state !== 'stopped'}
+              currentSimulationTime={simulationState.simulationTime}
             />
           </div>
 
@@ -520,6 +567,7 @@ function AppContent() {
               currentPrice={simulationState.lastCandle?.close || 0}
               symbol={symbol}
               simulationState={simulationState.state}
+              onLoadFromHistory={loadFromHistory}
             />
           </div>
         </PositionsProvider>

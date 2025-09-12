@@ -7,6 +7,7 @@ interface StartTimeSelectorProps {
   symbol?: string;
   compact?: boolean;
   disabled?: boolean;
+  currentSimulationTime?: number | null; // Current simulation time in milliseconds
 }
 
 const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({ 
@@ -14,7 +15,8 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
   selectedStartTime,
   symbol = 'BTCUSDT',
   compact = false,
-  disabled = false
+  disabled = false,
+  currentSimulationTime = null
 }) => {
   const [datetime, setDatetime] = useState('');
   const [earliestTime, setEarliestTime] = useState<Date | null>(null);
@@ -39,6 +41,15 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
 
     fetchEarliestTime();
   }, [symbol]);
+
+  // Update datetime input when selectedStartTime changes (for loading from history)
+  useEffect(() => {
+    if (selectedStartTime) {
+      const formattedDateTime = formatDateTimeLocal(selectedStartTime);
+      setDatetime(formattedDateTime);
+      setValidationError(null);
+    }
+  }, [selectedStartTime]);
 
   // Validate datetime input
   const validateDateTime = (selectedDateTime: Date, clearError = true): boolean => {
@@ -171,14 +182,9 @@ const StartTimeSelector: React.FC<StartTimeSelectorProps> = ({
             {validationError}
           </div>
         )}
-        {earliestTime && (
-          <div style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
-            Earliest: {earliestTime.toLocaleString()}
-          </div>
-        )}
-        {selectedStartTime && (
-          <div style={{ fontSize: '10px', color: '#28a745', marginTop: '2px' }}>
-            Selected: {selectedStartTime.toLocaleString()}
+        {currentSimulationTime && (
+          <div style={{ fontSize: '10px', color: '#007bff', marginTop: '2px', fontWeight: 'bold' }}>
+            Simulation Time: {new Date(currentSimulationTime).toLocaleString()}
           </div>
         )}
       </div>

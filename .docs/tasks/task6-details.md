@@ -108,11 +108,13 @@ Update5: resume stopped simulation
 1. Support resume on stopped status, resume will create the connection again, but with last status of stopped simulation. On ui, after stop, if symbol, startTime, initialFunding not changed, then support resume
 2. Still use old simulation id
 3. Use end_sim_time as currentPriceTime in simulation engine, based on this time to load candle data
-5. If the end_sim_time is too close to current datetime (for example current time - end_sim_time < speed * 300, means can resume for less than five minutes), then can't resume, because not enough data can be loaded, simulation will stop again quickly.
 6. Once stopped, control button should become "Start New" and "Resume"
 
 Update6: Simulation history view and load
 1. Add simulation history tab in the bottom area, include simulation params, and P&L
-2. On simulation history record, add a "continue" button if the simmulation can be resumed, once click, UI should recover to end status of that simulation
+2. On simulation history record, add a "open" button to load the whole to status of that history simulation, include selected symbol, startTime, initialFunding, current simulation time (end_sim_time in simulation history record), and load price chart end to current simulation time, load trade marks on price chart, load positions.
+3. After load, will be able to resume, just like in update5.
+4. Remove earliest time and selected time text on start time control card, instead display current simulation time
+ 
 
 

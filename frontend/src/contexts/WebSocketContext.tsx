@@ -45,6 +45,7 @@ interface WebSocketContextType {
   setTimeframe: (timeframe: string) => Promise<void>;
   getStatus: () => Promise<any>;
   resetSimulationStatus: () => void;
+  setHistoricalSimulationStatus: (status: SimulationStatus) => void;
   // Order methods
   placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number) => Promise<void>;
 }
@@ -378,6 +379,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     setLastOrderNotification(null);
   }, []);
 
+  // Set historical simulation status for loading from history
+  const setHistoricalSimulationStatus = React.useCallback((status: SimulationStatus) => {
+    console.log('Setting historical simulation status:', status);
+    setCurrentSimulationStatus(status);
+  }, []);
+
   // Order methods
   const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number) => {
     return sendControlMessage('order_place', {
@@ -407,6 +414,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     setTimeframe,
     getStatus,
     resetSimulationStatus,
+    setHistoricalSimulationStatus,
     placeOrder
   };
 

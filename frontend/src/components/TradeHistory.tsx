@@ -6,6 +6,7 @@ import { useWebSocketContext } from '../contexts/WebSocketContext';
 interface TradeHistoryProps {
   connectionState: ConnectionState;
   simulationState: 'stopped' | 'playing' | 'paused';
+  onRefreshReady?: (refreshFn: () => void) => void;
 }
 
 interface Trade {
@@ -16,12 +17,14 @@ interface Trade {
   side: string;
   quantity: number;
   price: number;
+  fee: number;
   created_at: string;
 }
 
 const TradeHistory: React.FC<TradeHistoryProps> = ({ 
   connectionState, 
-  simulationState 
+  simulationState,
+  onRefreshReady 
 }) => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
@@ -72,6 +75,13 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     }
   }, [currentSimulationStatus]);
 
+  // Expose refresh function to parent
+  useEffect(() => {
+    if (onRefreshReady) {
+      onRefreshReady(fetchTrades);
+    }
+  }, [onRefreshReady, fetchTrades]);
+
   // Auto-refresh trades data
   useEffect(() => {
     if (connectionState === ConnectionState.CONNECTED) {
@@ -113,134 +123,221 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     );
   }
 
-  return (
-    <div style={{ padding: '20px' }}>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '20px'
-      }}>
-        <h3 style={{
-          margin: 0,
-          fontSize: '18px',
-          color: '#333'
-        }}>
-          Trade History
-        </h3>
-        <div>
-          <button
-            onClick={fetchTrades}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              border: '1px solid #dee2e6',
-              borderRadius: '4px',
-              backgroundColor: 'white',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            {loading ? '⟳' : '↻'} Refresh
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div style={{
-          marginBottom: '15px',
-          padding: '10px',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
+  if (error) {
+    return (
+      <div style={{ padding: '20px' }}>
+        <div style={{ 
+          color: '#dc3545', 
+          backgroundColor: '#f8d7da', 
           border: '1px solid #f5c6cb',
-          borderRadius: '6px',
-          fontSize: '14px'
+          padding: '12px',
+          borderRadius: '4px'
         }}>
           {error}
         </div>
-      )}
+        <button
+          onClick={fetchTrades}
+          style={{
+            marginTop: '10px',
+            padding: '8px 16px',
+            backgroundColor: '#007bff',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
-      {trades.length === 0 ? (
-        <div style={{
-          textAlign: 'center',
-          padding: '40px',
-          color: '#6c757d',
-          fontSize: '14px',
-          fontStyle: 'italic'
+  if (trades.length === 0) {
+    return (
+      <div style={{ 
+        padding: '40px', 
+        textAlign: 'center',
+        color: '#6c757d'
+      }}>
+        <div style={{ fontSize: '16px', marginBottom: '10px' }}>No trades found</div>
+        <div style={{ fontSize: '14px' }}>Start trading to see your trade history here</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '0' }}>
+      <div style={{ 
+        overflowX: 'auto',
+        maxHeight: '400px',
+        overflowY: 'auto'
+      }}>
+        <table style={{ 
+          width: '100%', 
+          borderCollapse: 'collapse',
+          fontSize: '13px'
         }}>
-          No trades found
-        </div>
-      ) : (
-        <div style={{
-          overflowX: 'auto'
-        }}>
-          <table style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '13px'
-          }}>
-            <thead>
-              <tr style={{
+          <thead>
+            <tr style={{ 
+              backgroundColor: '#f8f9fa',
+              borderBottom: '2px solid #dee2e6'
+            }}>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'left', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
                 backgroundColor: '#f8f9fa',
-                borderBottom: '1px solid #dee2e6'
-              }}>
-                <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Time</th>
-                <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Symbol</th>
-                <th style={{ padding: '12px 8px', textAlign: 'center', color: '#495057' }}>Side</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right', color: '#495057' }}>Quantity</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right', color: '#495057' }}>Price</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right', color: '#495057' }}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((trade, index) => (
-                <tr
-                  key={trade.id}
-                  style={{
-                    borderBottom: index < trades.length - 1 ? '1px solid #dee2e6' : 'none'
-                  }}
-                >
-                  <td style={{ padding: '10px 8px' }}>
+                zIndex: 1
+              }}>Time</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'left', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Symbol</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'center', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Side</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Quantity</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Price</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Value</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Fee</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trades.map((trade, index) => (
+              <tr 
+                key={trade.id}
+                style={{ 
+                  borderBottom: '1px solid #dee2e6',
+                  backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#e3f2fd';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                }}
+              >
+                <td style={{ padding: '10px 8px' }}>
+                  <div style={{ color: '#666' }}>
                     {formatDateTime(trade.created_at)}
-                  </td>
-                  <td style={{ padding: '10px 8px', fontWeight: 'bold' }}>
-                    {trade.symbol}
-                  </td>
-                  <td style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center',
-                    color: getSideColor(trade.side),
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#333' }}>{trade.symbol}</div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
                     fontWeight: 'bold',
+                    backgroundColor: `${getSideColor(trade.side)}20`,
+                    color: getSideColor(trade.side),
                     textTransform: 'uppercase'
                   }}>
                     {trade.side}
-                  </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  </span>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
                     {formatQuantity(trade.quantity)}
-                  </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
                     {formatCurrency(trade.price)}
-                  </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
                     {formatCurrency(calculateValue(trade.quantity, trade.price))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {lastRefresh && (
-        <div style={{
-          marginTop: '15px',
-          fontSize: '11px',
-          color: '#6c757d',
-          textAlign: 'center'
-        }}>
-          Last updated: {lastRefresh.toLocaleTimeString()}
-        </div>
-      )}
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
+                    {formatCurrency(trade.fee || 0)}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      
+      {/* Summary footer */}
+      <div style={{
+        padding: '12px 16px',
+        backgroundColor: '#f8f9fa',
+        borderTop: '1px solid #dee2e6',
+        fontSize: '12px',
+        color: '#6c757d',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <span>Total trades: {trades.length}</span>
+        <button
+          onClick={fetchTrades}
+          disabled={loading}
+          style={{
+            padding: '4px 8px',
+            fontSize: '11px',
+            backgroundColor: 'transparent',
+            color: loading ? '#999' : '#6c757d',
+            border: '1px solid #dee2e6',
+            borderRadius: '3px',
+            cursor: loading ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
     </div>
   );
 };

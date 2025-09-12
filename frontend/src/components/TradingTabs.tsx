@@ -3,53 +3,99 @@ import { ConnectionState } from '../hooks/useWebSocket';
 import PositionsList from './PositionsList';
 import OrderHistory from './OrderHistory';
 import TradeHistory from './TradeHistory';
+import SimulationHistory from './SimulationHistory';
 
 interface TradingTabsProps {
   connectionState: ConnectionState;
   currentPrice: number;
   symbol: string;
   simulationState: 'stopped' | 'playing' | 'paused';
+  onLoadFromHistory?: (simulation: any) => void;
 }
 
-type TabType = 'positions' | 'orders' | 'trades';
+type TabType = 'positions' | 'orders' | 'trades' | 'history';
 
 const TradingTabs: React.FC<TradingTabsProps> = ({ 
   connectionState, 
   currentPrice, 
   symbol,
-  simulationState 
+  simulationState,
+  onLoadFromHistory 
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('positions');
+  
+  // Refs to store refresh functions from child components
+  const positionsRefreshRef = React.useRef<(() => void) | null>(null);
+  const ordersRefreshRef = React.useRef<(() => void) | null>(null);
+  const tradesRefreshRef = React.useRef<(() => void) | null>(null);
+  const historyRefreshRef = React.useRef<(() => void) | null>(null);
+
+  // Handle tab change and trigger refresh
+  const handleTabChange = (tabId: TabType) => {
+    setActiveTab(tabId);
+    
+    // Trigger refresh for the newly opened tab after a short delay
+    // Skip history tab as it already fetches data on mount
+    setTimeout(() => {
+      switch (tabId) {
+        case 'positions':
+          if (positionsRefreshRef.current) {
+            positionsRefreshRef.current();
+          }
+          break;
+        case 'orders':
+          if (ordersRefreshRef.current) {
+            ordersRefreshRef.current();
+          }
+          break;
+        case 'trades':
+          if (tradesRefreshRef.current) {
+            tradesRefreshRef.current();
+          }
+          break;
+        // Remove automatic refresh for history tab to prevent duplicate requests
+        // case 'history': SimulationHistory already fetches on mount
+      }
+    }, 100); // Small delay to ensure component is rendered
+  };
 
   const tabs: { id: TabType; label: string }[] = [
     { id: 'positions', label: 'Positions' },
     { id: 'orders', label: 'Order History' },
-    { id: 'trades', label: 'Trade History' }
+    { id: 'trades', label: 'Trade History' },
+    { id: 'history', label: 'Simulation History' }
   ];
 
   const renderTabContent = () => {
-    switch (activeTab) {
-      case 'positions':
-        return (
-          <PositionsList />
-        );
-      case 'orders':
-        return (
+    return (
+      <>
+        <div style={{ display: activeTab === 'positions' ? 'block' : 'none' }}>
+          <PositionsList 
+            onRefreshReady={(refreshFn) => positionsRefreshRef.current = refreshFn}
+          />
+        </div>
+        <div style={{ display: activeTab === 'orders' ? 'block' : 'none' }}>
           <OrderHistory
             connectionState={connectionState}
             simulationState={simulationState}
+            onRefreshReady={(refreshFn) => ordersRefreshRef.current = refreshFn}
           />
-        );
-      case 'trades':
-        return (
+        </div>
+        <div style={{ display: activeTab === 'trades' ? 'block' : 'none' }}>
           <TradeHistory
             connectionState={connectionState}
             simulationState={simulationState}
+            onRefreshReady={(refreshFn) => tradesRefreshRef.current = refreshFn}
           />
-        );
-      default:
-        return null;
-    }
+        </div>
+        <div style={{ display: activeTab === 'history' ? 'block' : 'none' }}>
+          <SimulationHistory 
+            onLoadSimulation={onLoadFromHistory}
+            onRefreshReady={(refreshFn) => historyRefreshRef.current = refreshFn}
+          />
+        </div>
+      </>
+    );
   };
 
   return (
@@ -69,7 +115,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabChange(tab.id)}
             style={{
               flex: '1',
               padding: '12px 20px',

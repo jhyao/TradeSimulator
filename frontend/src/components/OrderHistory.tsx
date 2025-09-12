@@ -6,6 +6,7 @@ import { useWebSocketContext } from '../contexts/WebSocketContext';
 interface OrderHistoryProps {
   connectionState: ConnectionState;
   simulationState: 'stopped' | 'playing' | 'paused';
+  onRefreshReady?: (refreshFn: () => void) => void;
 }
 
 interface Order {
@@ -22,7 +23,8 @@ interface Order {
 
 const OrderHistory: React.FC<OrderHistoryProps> = ({ 
   connectionState, 
-  simulationState 
+  simulationState,
+  onRefreshReady 
 }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,7 +52,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     setError(null);
 
     try {
-      const response = await fetch(`/api/v1/?limit=50&simulation_id=${simulationId}`, {
+      const response = await fetch(`/api/v1/orders?limit=50&simulation_id=${simulationId}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -72,6 +74,13 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
       setLoading(false);
     }
   }, [currentSimulationStatus]);
+
+  // Expose refresh function to parent
+  useEffect(() => {
+    if (onRefreshReady) {
+      onRefreshReady(fetchOrders);
+    }
+  }, [onRefreshReady, fetchOrders]);
 
   // Auto-refresh orders data
   useEffect(() => {
@@ -123,140 +132,215 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     );
   }
 
-  return (
-    <div style={{ padding: '20px' }}>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '20px'
-      }}>
-        <h3 style={{
-          margin: 0,
-          fontSize: '18px',
-          color: '#333'
-        }}>
-          Order History
-        </h3>
-        <div>
-          <button
-            onClick={fetchOrders}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              border: '1px solid #dee2e6',
-              borderRadius: '4px',
-              backgroundColor: 'white',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            {loading ? '⟳' : '↻'} Refresh
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div style={{
-          marginBottom: '15px',
-          padding: '10px',
-          backgroundColor: '#f8d7da',
-          color: '#721c24',
+  if (error) {
+    return (
+      <div style={{ padding: '20px' }}>
+        <div style={{ 
+          color: '#dc3545', 
+          backgroundColor: '#f8d7da', 
           border: '1px solid #f5c6cb',
-          borderRadius: '6px',
-          fontSize: '14px'
+          padding: '12px',
+          borderRadius: '4px'
         }}>
           {error}
         </div>
-      )}
+        <button
+          onClick={fetchOrders}
+          style={{
+            marginTop: '10px',
+            padding: '8px 16px',
+            backgroundColor: '#007bff',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
-      {orders.length === 0 ? (
-        <div style={{
-          textAlign: 'center',
-          padding: '40px',
-          color: '#6c757d',
-          fontSize: '14px',
-          fontStyle: 'italic'
+  if (orders.length === 0) {
+    return (
+      <div style={{ 
+        padding: '40px', 
+        textAlign: 'center',
+        color: '#6c757d'
+      }}>
+        <div style={{ fontSize: '16px', marginBottom: '10px' }}>No orders found</div>
+        <div style={{ fontSize: '14px' }}>Place an order to see your order history here</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: '0' }}>
+      <div style={{ 
+        overflowX: 'auto',
+        maxHeight: '400px',
+        overflowY: 'auto'
+      }}>
+        <table style={{ 
+          width: '100%', 
+          borderCollapse: 'collapse',
+          fontSize: '13px'
         }}>
-          No orders found
-        </div>
-      ) : (
-        <div style={{
-          overflowX: 'auto'
-        }}>
-          <table style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '13px'
-          }}>
-            <thead>
-              <tr style={{
+          <thead>
+            <tr style={{ 
+              backgroundColor: '#f8f9fa',
+              borderBottom: '2px solid #dee2e6'
+            }}>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'left', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
                 backgroundColor: '#f8f9fa',
-                borderBottom: '1px solid #dee2e6'
-              }}>
-                <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Time</th>
-                <th style={{ padding: '12px 8px', textAlign: 'left', color: '#495057' }}>Symbol</th>
-                <th style={{ padding: '12px 8px', textAlign: 'center', color: '#495057' }}>Side</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right', color: '#495057' }}>Quantity</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right', color: '#495057' }}>Price</th>
-                <th style={{ padding: '12px 8px', textAlign: 'center', color: '#495057' }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order, index) => (
-                <tr
-                  key={order.id}
-                  style={{
-                    borderBottom: index < orders.length - 1 ? '1px solid #dee2e6' : 'none'
-                  }}
-                >
-                  <td style={{ padding: '10px 8px' }}>
+                zIndex: 1
+              }}>Time</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'left', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Symbol</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'center', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Side</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Quantity</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'right', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Price</th>
+              <th style={{ 
+                padding: '10px 8px', 
+                textAlign: 'center', 
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order, index) => (
+              <tr 
+                key={order.id}
+                style={{ 
+                  borderBottom: '1px solid #dee2e6',
+                  backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#e3f2fd';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                }}
+              >
+                <td style={{ padding: '10px 8px' }}>
+                  <div style={{ color: '#666' }}>
                     {formatDateTime(order.created_at)}
-                  </td>
-                  <td style={{ padding: '10px 8px', fontWeight: 'bold' }}>
-                    {order.symbol}
-                  </td>
-                  <td style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center',
-                    color: getSideColor(order.side),
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px' }}>
+                  <div style={{ fontWeight: 'bold', color: '#333' }}>{order.symbol}</div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
                     fontWeight: 'bold',
+                    backgroundColor: `${getSideColor(order.side)}20`,
+                    color: getSideColor(order.side),
                     textTransform: 'uppercase'
                   }}>
                     {order.side}
-                  </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  </span>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
                     {formatQuantity(order.quantity)}
-                  </td>
-                  <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                  <div style={{ color: '#333' }}>
                     {formatCurrency(order.price)}
-                  </td>
-                  <td style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center',
-                    color: getStatusColor(order.status),
+                  </div>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
                     fontWeight: 'bold',
+                    backgroundColor: `${getStatusColor(order.status)}20`,
+                    color: getStatusColor(order.status),
                     textTransform: 'capitalize'
                   }}>
                     {order.status}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {lastRefresh && (
-        <div style={{
-          marginTop: '15px',
-          fontSize: '11px',
-          color: '#6c757d',
-          textAlign: 'center'
-        }}>
-          Last updated: {lastRefresh.toLocaleTimeString()}
-        </div>
-      )}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      
+      {/* Summary footer */}
+      <div style={{
+        padding: '12px 16px',
+        backgroundColor: '#f8f9fa',
+        borderTop: '1px solid #dee2e6',
+        fontSize: '12px',
+        color: '#6c757d',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+      }}>
+        <span>Total orders: {orders.length}</span>
+        <button
+          onClick={fetchOrders}
+          disabled={loading}
+          style={{
+            padding: '4px 8px',
+            fontSize: '11px',
+            backgroundColor: 'transparent',
+            color: loading ? '#999' : '#6c757d',
+            border: '1px solid #dee2e6',
+            borderRadius: '3px',
+            cursor: loading ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
     </div>
   );
 };
