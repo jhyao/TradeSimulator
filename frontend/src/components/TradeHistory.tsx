@@ -7,6 +7,7 @@ interface TradeHistoryProps {
   connectionState: ConnectionState;
   simulationState: 'stopped' | 'playing' | 'paused';
   onRefreshReady?: (refreshFn: () => void) => void;
+  isActive?: boolean;
 }
 
 interface Trade {
@@ -24,13 +25,14 @@ interface Trade {
 const TradeHistory: React.FC<TradeHistoryProps> = ({ 
   connectionState, 
   simulationState,
-  onRefreshReady 
+  onRefreshReady,
+  isActive = true
 }) => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const { currentSimulationStatus } = useWebSocketContext();
+  const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
 
   const fetchTrades = useCallback(async () => {
     // If no simulation status available yet, wait
@@ -82,21 +84,27 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     }
   }, [onRefreshReady, fetchTrades]);
 
-  // Auto-refresh trades data
+  // Fetch trades on connection
   useEffect(() => {
     if (connectionState === ConnectionState.CONNECTED) {
       fetchTrades();
-      
-      // Set up auto-refresh every 5 seconds during simulation
-      const interval = simulationState === 'playing' 
-        ? setInterval(fetchTrades, 5000)
-        : null;
-
-      return () => {
-        if (interval) clearInterval(interval);
-      };
     }
-  }, [connectionState, simulationState, fetchTrades]);
+  }, [connectionState, fetchTrades]);
+
+  // Auto-refresh trades when order events occur that create trades (only when tab is active)
+  useEffect(() => {
+    if (isActive && lastOrderNotification) {
+      const { type } = lastOrderNotification;
+      
+      // Refresh trade history when orders are executed (which create trades)
+      if (type === 'order_executed') {
+        // Small delay to ensure backend has processed the change
+        setTimeout(() => {
+          fetchTrades();
+        }, 500);
+      }
+    }
+  }, [isActive, lastOrderNotification, fetchTrades]);
 
   const getSideColor = (side: string) => {
     return side.toLowerCase() === 'buy' ? '#28a745' : '#dc3545';

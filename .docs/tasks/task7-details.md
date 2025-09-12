@@ -99,3 +99,10 @@ processNextBaseUpdate() → Update Price → Process Limit Orders → Send Price
 - **Database Consistency**: Failed executions roll back cleanly
 - **Order Recovery**: Pending orders reload from database on session restart
 - **Graceful Degradation**: System continues if order book operations fail
+
+
+## Update1: Order UI refine
+* Display positions and pending orders in one tab for better quick trading action, pending orders under positions
+* Add cancel button on pending orders
+* When display orders, for market order, show price as '-', for limit order, show limit price
+

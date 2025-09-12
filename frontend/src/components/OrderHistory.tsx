@@ -7,6 +7,7 @@ interface OrderHistoryProps {
   connectionState: ConnectionState;
   simulationState: 'stopped' | 'playing' | 'paused';
   onRefreshReady?: (refreshFn: () => void) => void;
+  isActive?: boolean;
 }
 
 interface Order {
@@ -14,23 +15,31 @@ interface Order {
   user_id: number;
   symbol: string;
   side: string;
+  type: string;
   quantity: number;
-  price: number;
   status: string;
+  placed_at: string;
   created_at: string;
-  updated_at: string;
+  order_params?: {
+    limit_price?: number;
+    stop_price?: number;
+    stop_limit_price?: number;
+    take_profit_price?: number;
+    stop_loss_price?: number;
+  };
 }
 
 const OrderHistory: React.FC<OrderHistoryProps> = ({ 
   connectionState, 
   simulationState,
-  onRefreshReady 
+  onRefreshReady,
+  isActive = true
 }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const { currentSimulationStatus } = useWebSocketContext();
+  const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
 
   const fetchOrders = useCallback(async () => {
     // If no simulation status available yet, wait
@@ -82,21 +91,27 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     }
   }, [onRefreshReady, fetchOrders]);
 
-  // Auto-refresh orders data
+  // Fetch orders on connection
   useEffect(() => {
     if (connectionState === ConnectionState.CONNECTED) {
       fetchOrders();
-      
-      // Set up auto-refresh every 5 seconds during simulation
-      const interval = simulationState === 'playing' 
-        ? setInterval(fetchOrders, 5000)
-        : null;
-
-      return () => {
-        if (interval) clearInterval(interval);
-      };
     }
-  }, [connectionState, simulationState, fetchOrders]);
+  }, [connectionState, fetchOrders]);
+
+  // Auto-refresh orders when order events occur (only when tab is active)
+  useEffect(() => {
+    if (isActive && lastOrderNotification) {
+      const { type } = lastOrderNotification;
+      
+      // Refresh order history for order placement and execution events
+      if (type === 'order_placed' || type === 'order_executed') {
+        // Small delay to ensure backend has processed the change
+        setTimeout(() => {
+          fetchOrders();
+        }, 500);
+      }
+    }
+  }, [isActive, lastOrderNotification, fetchOrders]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -118,6 +133,16 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString();
+  };
+
+  const getOrderPrice = (order: Order) => {
+    if (order.type === 'market') {
+      return '-';
+    }
+    if (order.order_params?.limit_price) {
+      return formatCurrency(order.order_params.limit_price);
+    }
+    return '-';
   };
 
   if (loading && orders.length === 0) {
@@ -291,7 +316,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
                 </td>
                 <td style={{ padding: '10px 8px', textAlign: 'right' }}>
                   <div style={{ color: '#333' }}>
-                    {formatCurrency(order.price)}
+                    {getOrderPrice(order)}
                   </div>
                 </td>
                 <td style={{ padding: '10px 8px', textAlign: 'center' }}>

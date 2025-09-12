@@ -24,6 +24,11 @@ func (os *OrderService) GetUserOrders(userID uint, simulationID uint, limit int)
 	return os.orderDAO.GetUserOrders(userID, simulationID, limit)
 }
 
+// GetUserOrdersWithFilter gets orders for a user with optional status filter
+func (os *OrderService) GetUserOrdersWithFilter(userID uint, simulationID uint, limit int, status string) ([]models.Order, error) {
+	return os.orderDAO.GetUserOrdersWithFilter(userID, simulationID, limit, status)
+}
+
 // GetUserTrades gets all trades for a user
 func (os *OrderService) GetUserTrades(userID uint, simulationID uint, limit int) ([]models.Trade, error) {
 	return os.tradeDAO.GetUserTrades(userID, simulationID, limit)

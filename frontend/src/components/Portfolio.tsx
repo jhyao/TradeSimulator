@@ -17,7 +17,7 @@ interface PortfolioSummary {
 const Portfolio: React.FC<PortfolioProps> = ({ 
   initialFunding
 }) => {
-  const { calculatedPositions, loading, error, lastRefresh, fetchPositions, resetPortfolio } = usePositions();
+  const { calculatedPositions, loading, error, lastRefresh, fetchPositions } = usePositions();
 
   const portfolioData = useMemo((): PortfolioSummary => {
     let totalValue = 0;
@@ -96,21 +96,6 @@ const Portfolio: React.FC<PortfolioProps> = ({
             }}
           >
             {loading ? '⟳' : '↻'} Refresh
-          </button>
-          <button
-            onClick={resetPortfolio}
-            disabled={loading}
-            style={{
-              padding: '6px 12px',
-              border: '1px solid #dc3545',
-              borderRadius: '4px',
-              backgroundColor: 'white',
-              color: '#dc3545',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Reset
           </button>
         </div>
       </div>

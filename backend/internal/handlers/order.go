@@ -31,6 +31,7 @@ func NewOrderHandler(orderService *services.OrderService, portfolioService *serv
 // @Produce json
 // @Param simulation_id query string true "Simulation ID"
 // @Param limit query int false "Number of orders to return (default: 50)" default(50) minimum(1) maximum(1000)
+// @Param status query string false "Filter orders by status (e.g., pending, filled, cancelled)"
 // @Success 200 {object} map[string]interface{} "List of orders"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 500 {object} map[string]interface{} "Internal server error"
@@ -59,13 +60,17 @@ func (oh *OrderHandler) GetOrders(c *gin.Context) {
 		limit = 50
 	}
 
-	orders, err := oh.orderService.GetUserOrders(userID, uint(simulationID), limit)
+	// Get status filter from query parameter
+	status := c.Query("status")
+
+	orders, err := oh.orderService.GetUserOrdersWithFilter(userID, uint(simulationID), limit, status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"success": true,
 		"orders": orders,
 		"count":  len(orders),
 	})

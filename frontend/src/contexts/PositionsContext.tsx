@@ -29,7 +29,6 @@ interface PositionsContextType {
   error: string | null;
   lastRefresh: Date | null;
   fetchPositions: () => Promise<void>;
-  resetPortfolio: () => Promise<void>;
 }
 
 const PositionsContext = createContext<PositionsContextType | undefined>(undefined);
@@ -130,36 +129,6 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     }
   }, [currentSimulationStatus]);
 
-  const resetPortfolio = useCallback(async () => {
-    if (!window.confirm('Are you sure you want to reset your portfolio? This will clear all positions and reset your balance to $10,000.')) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/v1/positions/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      await fetchPositions();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to reset portfolio: ${errorMessage}`);
-      console.error('Error resetting portfolio:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchPositions]);
-
   // Auto-refresh positions data - SINGLE SOURCE OF TRUTH
   useEffect(() => {
     if (currentSimulationStatus?.state === 'playing') {
@@ -167,7 +136,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     }
     
     const interval = currentSimulationStatus?.state === 'playing' 
-      ? setInterval(fetchPositions, 5000)
+      ? setInterval(fetchPositions, 30000)
       : null;
 
     return () => {
@@ -191,7 +160,6 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     error,
     lastRefresh,
     fetchPositions,
-    resetPortfolio
   };
 
   return (

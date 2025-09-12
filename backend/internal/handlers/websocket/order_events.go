@@ -17,6 +17,10 @@ type OrderPlaceData struct {
 	LimitPrice *float64 `json:"limit_price,omitempty"` // Required for limit orders
 }
 
+type OrderCancelData struct {
+	OrderID uint `json:"order_id"`
+}
+
 type OrderControlResponse struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message"`
@@ -136,7 +140,32 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 
 // handleCancelOrder handles order cancellation requests
 func (h *OrderEventHandlerImpl) handleCancelOrder(client *Client, data interface{}) error {
-	// TODO: Implement order cancellation logic when needed
-	client.SendError("Order cancellation not implemented", "Feature not yet implemented")
+	dataBytes, _ := json.Marshal(data)
+	var cancelData OrderCancelData
+	if err := json.Unmarshal(dataBytes, &cancelData); err != nil {
+		client.SendError("Invalid cancel data", err.Error())
+		return nil
+	}
+
+	if cancelData.OrderID == 0 {
+		client.SendError("Invalid order ID", "Order ID cannot be zero")
+		return nil
+	}
+
+	// Check if simulation is running
+	status := client.SimulationEngine.GetStatus()
+	if !status.IsRunning {
+		client.SendError("Simulation not running", "Cannot cancel orders when simulation is not running")
+		return nil
+	}
+
+	// Cancel the order using the client's order execution engine
+	// The engine will automatically send an order_cancelled message upon successful cancellation
+	_, err := client.OrderEngine.CancelOrder(cancelData.OrderID)
+	if err != nil {
+		client.SendError("Failed to cancel order", err.Error())
+		return nil
+	}
+
 	return nil
 }

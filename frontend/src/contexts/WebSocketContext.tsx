@@ -3,7 +3,7 @@ import { useWebSocket, WebSocketMessage, SimulationUpdateData, ConnectionState }
 import { MessageData } from '../components/FloatingMessage';
 
 interface OrderNotification {
-  type: 'order_placed' | 'order_executed' | 'order_failed';
+  type: 'order_placed' | 'order_executed' | 'order_failed' | 'order_cancelled';
   order: any;
   trade?: any;
   message: string;
@@ -48,6 +48,7 @@ interface WebSocketContextType {
   setHistoricalSimulationStatus: (status: SimulationStatus) => void;
   // Order methods
   placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number, type?: 'market' | 'limit', limitPrice?: number) => Promise<void>;
+  cancelOrder: (orderId: number) => Promise<void>;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -146,6 +147,17 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           // Show floating message for order executed
           const orderExecutedMsg = "Order executed";
           addFloatingMessage(orderExecutedMsg, 'status');
+          break;
+        case 'order_cancelled':
+          setLastOrderNotification({
+            type: 'order_cancelled',
+            order: lastMessage.data.order,
+            message: 'Order cancelled',
+            timestamp: Date.now()
+          });
+          // Show floating message for order cancelled
+          const orderCancelledMsg = "Order cancelled";
+          addFloatingMessage(orderCancelledMsg, 'status');
           break;
         case 'order_control_response':
           handleOrderControlResponse(lastMessage);
@@ -401,6 +413,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     return sendControlMessage('order_place', orderData);
   }, [sendControlMessage]);
 
+  const cancelOrder = React.useCallback(async (orderId: number) => {
+    return sendControlMessage('order_cancel', { order_id: orderId });
+  }, [sendControlMessage]);
+
   const value: WebSocketContextType = {
     connectionState,
     lastMessage,
@@ -422,7 +438,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     getStatus,
     resetSimulationStatus,
     setHistoricalSimulationStatus,
-    placeOrder
+    placeOrder,
+    cancelOrder
   };
 
   return (

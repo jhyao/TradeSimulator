@@ -18,6 +18,7 @@ type OrderDAOInterface interface {
 	Update(order *models.Order) error
 	GetByID(orderID uint) (*models.Order, error)
 	GetUserOrders(userID, simulationID uint, limit int) ([]models.Order, error)
+	GetUserOrdersWithFilter(userID, simulationID uint, limit int, status string) ([]models.Order, error)
 	CreateWithTx(tx *gorm.DB, order *models.Order) error
 	UpdateWithTx(tx *gorm.DB, order *models.Order) error
 }
@@ -58,6 +59,29 @@ func (dao *OrderDAO) GetByID(orderID uint) (*models.Order, error) {
 func (dao *OrderDAO) GetUserOrders(userID, simulationID uint, limit int) ([]models.Order, error) {
 	var orders []models.Order
 	query := dao.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID).Order("created_at DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if err := query.Find(&orders).Error; err != nil {
+		return nil, fmt.Errorf("failed to get orders: %w", err)
+	}
+
+	return orders, nil
+}
+
+// GetUserOrdersWithFilter gets orders for a user in a specific simulation with optional status filter
+func (dao *OrderDAO) GetUserOrdersWithFilter(userID, simulationID uint, limit int, status string) ([]models.Order, error) {
+	var orders []models.Order
+	query := dao.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID)
+
+	// Add status filter if provided
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	query = query.Order("created_at DESC")
 
 	if limit > 0 {
 		query = query.Limit(limit)
