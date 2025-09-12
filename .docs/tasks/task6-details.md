@@ -105,10 +105,9 @@ Update4: websocket connection open/close
 4. Once stopped, clear related things in backend, but keep things in UI.
 
 Update5: resume stopped simulation
-1. Support resume on stopped status, resume will create the connection again, but with last status of stopped simulation. 
+1. Support resume on stopped status, resume will create the connection again, but with last status of stopped simulation. On ui, after stop, if symbol, startTime, initialFunding not changed, then support resume
 2. Still use old simulation id
 3. Use end_sim_time as currentPriceTime in simulation engine, based on this time to load candle data
-4. when pause/stop/complete should also update speed/timeframe to db record, as speed is needed when resume the stopped simulation
 5. If the end_sim_time is too close to current datetime (for example current time - end_sim_time < speed * 300, means can resume for less than five minutes), then can't resume, because not enough data can be loaded, simulation will stop again quickly.
 6. Once stopped, control button should become "Start New" and "Resume"
 

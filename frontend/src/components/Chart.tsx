@@ -329,7 +329,7 @@ const Chart: React.FC<ChartProps> = ({
         },
       },
       width: chartContainerRef.current.clientWidth,
-      height: Math.min(chartContainerRef.current.clientWidth * 0.6, 800), // 60% of width for height
+      height: Math.min(Math.max(chartContainerRef.current.clientWidth * 0.6, 600), 800), // 60% of width for height, cap floor to 600 to 800
       grid: {
         vertLines: {
           color: '#e1e1e1',
@@ -476,9 +476,9 @@ const Chart: React.FC<ChartProps> = ({
     // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current) {
-        chart.applyOptions({ 
+        chart.applyOptions({
           width: chartContainerRef.current.clientWidth,
-          height: Math.min(chartContainerRef.current.clientWidth * 0.6, 800), // 60% of width for height
+          height: Math.min(Math.max(chartContainerRef.current.clientWidth * 0.6, 600), 800), // 60% of width for height, cap floor to 600 to 800
         });
       }
     };
