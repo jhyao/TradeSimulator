@@ -125,39 +125,43 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           handleControlResponse(lastMessage);
           break;
         case 'order_placed':
+          const placedOrder = lastMessage.data.order;
+          const placedOrderMsg = `${placedOrder?.side?.toUpperCase() || 'ORDER'} order placed: ${placedOrder?.quantity || '?'} ${placedOrder?.symbol || ''} at ${placedOrder?.order_params?.limit_price ? `$${placedOrder.order_params.limit_price}` : 'market price'}`;
           setLastOrderNotification({
             type: 'order_placed',
-            order: lastMessage.data.order,
+            order: placedOrder,
             trade: lastMessage.data.trade,
-            message: 'Order placed successfully',
+            message: placedOrderMsg,
             timestamp: Date.now()
           });
           // Show floating message for order placed
-          const orderPlacedMsg = "Order placed";
-          addFloatingMessage(orderPlacedMsg, 'status');
+          addFloatingMessage(placedOrderMsg, 'status');
           break;
         case 'order_executed':
+          const executedOrder = lastMessage.data.order;
+          const executedTrade = lastMessage.data.trade;
+          const executedOrderMsg = `${executedOrder?.side?.toUpperCase() || 'ORDER'} executed: ${executedOrder?.quantity || executedTrade?.quantity || '?'} ${executedOrder?.symbol || executedTrade?.symbol || ''} at $${executedTrade?.price || executedOrder?.order_params?.limit_price || '?'}`;
           setLastOrderNotification({
             type: 'order_executed',
-            order: lastMessage.data.order,
-            trade: lastMessage.data.trade,
-            message: 'Order executed',
+            order: executedOrder,
+            trade: executedTrade,
+            message: executedOrderMsg,
             timestamp: Date.now()
           });
           // Show floating message for order executed
-          const orderExecutedMsg = "Order executed";
-          addFloatingMessage(orderExecutedMsg, 'status');
+          addFloatingMessage(executedOrderMsg, 'status');
           break;
         case 'order_cancelled':
+          const cancelledOrder = lastMessage.data.order;
+          const cancelledOrderMsg = `${cancelledOrder?.side?.toUpperCase() || 'ORDER'} order cancelled: ${cancelledOrder?.quantity || '?'} ${cancelledOrder?.symbol || ''}`;
           setLastOrderNotification({
             type: 'order_cancelled',
-            order: lastMessage.data.order,
-            message: 'Order cancelled',
+            order: cancelledOrder,
+            message: cancelledOrderMsg,
             timestamp: Date.now()
           });
           // Show floating message for order cancelled
-          const orderCancelledMsg = "Order cancelled";
-          addFloatingMessage(orderCancelledMsg, 'status');
+          addFloatingMessage(cancelledOrderMsg, 'status');
           break;
         case 'order_control_response':
           handleOrderControlResponse(lastMessage);
@@ -212,14 +216,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   // Handle order control responses
   const handleOrderControlResponse = (message: WebSocketMessage) => {
     const response = message.data;
-    
+
     if (response.success) {
       console.log('Order operation successful:', response.message);
+      const order = response.data?.order;
+      const trade = response.data?.trade;
+      const detailedMsg = order
+        ? `${order.side?.toUpperCase() || 'ORDER'} order placed: ${order.quantity || '?'} ${order.symbol || ''} at ${order.order_params?.limit_price ? `$${order.order_params.limit_price}` : 'market price'}`
+        : (response.message || 'Order placed successfully');
+
       setLastOrderNotification({
         type: 'order_placed',
-        order: response.data?.order,
-        trade: response.data?.trade,
-        message: response.message || 'Order placed successfully',
+        order: order,
+        trade: trade,
+        message: detailedMsg,
         timestamp: Date.now()
       });
     } else {

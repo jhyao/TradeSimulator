@@ -298,13 +298,13 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       await placeOrder(symbol, orderState.side, quantity, orderState.type, limitPrice);
 
       // Reset form on successful send
-      setOrderState(prev => ({
-        ...prev,
-        quantity: '',
-        limitPrice: orderState.type === 'market' ? '' : prev.limitPrice,
-        lastOrderStatus: 'success',
-        lastOrderMessage: `${orderState.type.toUpperCase()} ${orderState.side.toUpperCase()} order for ${quantity} ${symbol} sent`
-      }));
+      // setOrderState(prev => ({
+      //   ...prev,
+      //   quantity: '',
+      //   limitPrice: orderState.type === 'market' ? '' : prev.limitPrice,
+      //   lastOrderStatus: 'success',
+      //   lastOrderMessage: `${orderState.type.toUpperCase()} ${orderState.side.toUpperCase()} order for ${quantity} ${symbol} sent`
+      // }));
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
