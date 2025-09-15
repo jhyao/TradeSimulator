@@ -106,3 +106,11 @@ processNextBaseUpdate() → Update Price → Process Limit Orders → Send Price
 * Add cancel button on pending orders
 * When display orders, for market order, show price as '-', for limit order, show limit price
 
+## Update2: Order card quick action
+* Place order card add a slider input 0% - 100%， for buy means buy with this percentage of total cash balance, for sell means sell this percentage of symbol position.
+* Add quick points 25%, 50%, 75%, 100% on the slider for quick click
+* After set percentage, auto set quantity
+* Display max available quantity
+* Display warning if quantity input exceed max limit
+* When click the market price, copy the price to limit price input for limit order type
+* Add quick increase/decrease button on price/quantity number input
