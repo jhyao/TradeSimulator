@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
 import { formatCurrency, formatQuantity } from '../utils/numberFormat';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
@@ -29,8 +29,8 @@ interface Order {
   };
 }
 
-const OrderHistory: React.FC<OrderHistoryProps> = ({ 
-  connectionState, 
+const OrderHistory: React.FC<OrderHistoryProps> = ({
+  connectionState,
   simulationState,
   onRefreshReady,
   isActive = true
@@ -38,8 +38,11 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
+
+  // Use ref to track isActive without making it a dependency
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   const fetchOrders = useCallback(async () => {
     // If no simulation status available yet, wait
@@ -74,7 +77,6 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
 
       const data = await response.json();
       setOrders(data.orders || []);
-      setLastRefresh(new Date());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setError(`Failed to load orders: ${errorMessage}`);
@@ -91,27 +93,20 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     }
   }, [onRefreshReady, fetchOrders]);
 
-  // Fetch orders on connection
-  useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
-      fetchOrders();
-    }
-  }, [connectionState, fetchOrders]);
-
   // Auto-refresh orders when order events occur (only when tab is active)
   useEffect(() => {
-    if (isActive && lastOrderNotification) {
+    if (isActiveRef.current && lastOrderNotification) {
       const { type } = lastOrderNotification;
-      
+
       // Refresh order history for order placement and execution events
       if (type === 'order_placed' || type === 'order_executed') {
-        // Small delay to ensure backend has processed the change
-        setTimeout(() => {
-          fetchOrders();
-        }, 500);
+          // Small delay to ensure backend has processed the change
+          setTimeout(() => {
+            fetchOrders();
+          }, 500);
+        }
       }
-    }
-  }, [isActive, lastOrderNotification, fetchOrders]);
+  }, [lastOrderNotification, fetchOrders]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { usePositions } from '../contexts/PositionsContext';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
@@ -31,12 +31,16 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
   const { calculatedPositions, loading: positionsLoading, error: positionsError, fetchPositions } = usePositions();
   const { placeOrder, cancelOrder, currentSimulationStatus, addFloatingMessage, lastOrderNotification } = useWebSocketContext();
   const [closingPositions, setClosingPositions] = useState<Set<string>>(new Set());
-  
+
   // Pending orders state
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [cancellingOrders, setCancellingOrders] = useState<Set<number>>(new Set());
+
+  // Use ref to track isActive without making it a dependency
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   const fetchPendingOrders = useCallback(async () => {
     if (!currentSimulationStatus) {
@@ -91,19 +95,14 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
     }
   }, [onRefreshReady, refreshAll]);
 
-  // Initial data fetch
-  useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
-
   // Auto-refresh pending orders when order events occur (only when tab is active)
   useEffect(() => {
-    if (isActive && lastOrderNotification) {
+    if (isActiveRef.current && lastOrderNotification) {
       const { type } = lastOrderNotification;
-      
+
       // Refresh pending orders for order placement, cancellation, and execution events
       if (type === 'order_placed' || type === 'order_cancelled' || type === 'order_executed') {
-        // Small delay to ensure backend has processed the change
+          // Small delay to ensure backend has processed the change
         setTimeout(() => {
           fetchPendingOrders();
           // Also refresh positions in case of executed orders
@@ -113,7 +112,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
         }, 500);
       }
     }
-  }, [isActive, lastOrderNotification, fetchPendingOrders, fetchPositions]);
+  }, [lastOrderNotification, fetchPendingOrders, fetchPositions]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;

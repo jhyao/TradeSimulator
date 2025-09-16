@@ -53,8 +53,12 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
             tradesRefreshRef.current();
           }
           break;
-        // Remove automatic refresh for history tab to prevent duplicate requests
-        // case 'history': SimulationHistory already fetches on mount
+        case 'history':
+          if (historyRefreshRef.current) {
+            historyRefreshRef.current();
+          }
+          break;
+        // No default
       }
     }, 100); // Small delay to ensure component is rendered
   };

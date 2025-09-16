@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
 import { formatCurrency, formatQuantity } from '../utils/numberFormat';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
@@ -22,8 +22,8 @@ interface Trade {
   created_at: string;
 }
 
-const TradeHistory: React.FC<TradeHistoryProps> = ({ 
-  connectionState, 
+const TradeHistory: React.FC<TradeHistoryProps> = ({
+  connectionState,
   simulationState,
   onRefreshReady,
   isActive = true
@@ -31,8 +31,11 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
+
+  // Use ref to track isActive without making it a dependency
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   const fetchTrades = useCallback(async () => {
     // If no simulation status available yet, wait
@@ -67,7 +70,6 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
 
       const data = await response.json();
       setTrades(data.trades || []);
-      setLastRefresh(new Date());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setError(`Failed to load trades: ${errorMessage}`);
@@ -84,27 +86,20 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     }
   }, [onRefreshReady, fetchTrades]);
 
-  // Fetch trades on connection
-  useEffect(() => {
-    if (connectionState === ConnectionState.CONNECTED) {
-      fetchTrades();
-    }
-  }, [connectionState, fetchTrades]);
-
   // Auto-refresh trades when order events occur that create trades (only when tab is active)
   useEffect(() => {
-    if (isActive && lastOrderNotification) {
+    if (isActiveRef.current && lastOrderNotification) {
       const { type } = lastOrderNotification;
-      
+
       // Refresh trade history when orders are executed (which create trades)
       if (type === 'order_executed') {
-        // Small delay to ensure backend has processed the change
-        setTimeout(() => {
-          fetchTrades();
-        }, 500);
+          // Small delay to ensure backend has processed the change
+          setTimeout(() => {
+            fetchTrades();
+          }, 500);
+        }
       }
-    }
-  }, [isActive, lastOrderNotification, fetchTrades]);
+  }, [lastOrderNotification, fetchTrades]);
 
   const getSideColor = (side: string) => {
     return side.toLowerCase() === 'buy' ? '#28a745' : '#dc3545';
