@@ -11,7 +11,7 @@ interface OrderPanelProps {
 }
 
 interface OrderState {
-  side: 'buy' | 'sell';
+  side: 'buy' | 'sell' | 'open_long' | 'open_short' | 'close_long' | 'close_short';
   type: 'market' | 'limit';
   quantity: string;
   limitPrice: string;
@@ -28,8 +28,8 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
   currentPrice, 
   simulationState 
 }) => {
-  const { connectionState, placeOrder, lastOrderNotification } = useWebSocketContext();
-  const { calculatedPositions } = usePositions();
+  const { connectionState, placeOrder, lastOrderNotification, tradingMode, leverage } = useWebSocketContext();
+  const { calculatedPositions, calculatedFuturesPositions } = usePositions();
   const [orderState, setOrderState] = useState<OrderState>({
     side: 'buy',
     type: 'market',
@@ -91,10 +91,34 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       // Max quantity = cashBalance / (price * 1.001)
       const feeMultiplier = 1.001; // 0.1% fee
       return cashBalance / (effectivePrice * feeMultiplier);
-    } else {
+    } else if (orderState.side === 'sell') {
       return getSymbolPosition();
+    } else if (orderState.side === 'open_long' || orderState.side === 'open_short') {
+      // For futures opening positions, calculate max quantity based on available margin
+      const cashBalance = getCashBalance();
+      const effectivePrice = getEffectivePrice();
+      if (effectivePrice <= 0 || leverage <= 0) return 0;
+
+      // For futures orders:
+      // Required margin = (quantity * price) / leverage
+      // Fee = quantity * price * 0.0004 (0.04% for futures)
+      // Total margin needed = required margin + fee
+      // Max quantity = cashBalance / ((price / leverage) + price * 0.0004)
+      const marginRequirement = effectivePrice / leverage;
+      const feeMultiplier = effectivePrice * 0.0004; // 0.04% fee for futures
+      return cashBalance / (marginRequirement + feeMultiplier);
+    } else if (orderState.side === 'close_long' || orderState.side === 'close_short') {
+      // For closing futures positions, get the existing position size
+      const positionSide = orderState.side === 'close_long' ? 'long' : 'short';
+      const futuresPosition = calculatedFuturesPositions.find(pos =>
+        pos.position.symbol === symbol &&
+        pos.position.position_side === positionSide
+      );
+      return futuresPosition ? Math.abs(futuresPosition.position.size) : 0;
+    } else {
+      return 0;
     }
-  }, [orderState.side, getCashBalance, getSymbolPosition, getEffectivePrice]);
+  }, [orderState.side, getCashBalance, getSymbolPosition, getEffectivePrice, leverage, calculatedPositions, calculatedFuturesPositions, symbol]);
 
   const floorToDecimals = useCallback((value: number, decimals: number): number => {
     const multiplier = Math.pow(10, decimals);
@@ -119,8 +143,44 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     return quantity > maxQuantity;
   }, [orderState.quantity, calculateMaxQuantity]);
 
-  const handleSideChange = useCallback((side: 'buy' | 'sell') => {
+  const handleSideChange = useCallback((side: 'buy' | 'sell' | 'open_long' | 'open_short' | 'close_long' | 'close_short') => {
     setOrderState(prev => ({ ...prev, side }));
+  }, []);
+
+  // Helper function to check if order side is futures
+  const isFuturesOrder = useCallback((side: string): boolean => {
+    return side === 'open_long' || side === 'open_short' || side === 'close_long' || side === 'close_short';
+  }, []);
+
+  // Helper function to get display name for order side
+  const getSideDisplayName = useCallback((side: string): string => {
+    switch (side) {
+      case 'buy': return 'BUY';
+      case 'sell': return 'SELL';
+      case 'open_long': return 'OPEN LONG';
+      case 'open_short': return 'OPEN SHORT';
+      case 'close_long': return 'CLOSE LONG';
+      case 'close_short': return 'CLOSE SHORT';
+      default: return side.toUpperCase();
+    }
+  }, []);
+
+  // Helper function to get button color for order side
+  const getSideButtonColor = useCallback((side: string, isSelected: boolean): string => {
+    if (!isSelected) return '#f8f9fa';
+
+    switch (side) {
+      case 'buy':
+      case 'open_long':
+      case 'close_short':
+        return '#28a745'; // Green for long/buy
+      case 'sell':
+      case 'open_short':
+      case 'close_long':
+        return '#dc3545'; // Red for short/sell
+      default:
+        return '#007bff';
+    }
   }, []);
 
   const handleTypeChange = useCallback((type: 'market' | 'limit') => {
@@ -293,9 +353,10 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     try {
       const quantity = parseFloat(orderState.quantity);
       const limitPrice = orderState.type === 'limit' ? parseFloat(orderState.limitPrice) : undefined;
-      
-      // Send order via WebSocket context
-      await placeOrder(symbol, orderState.side, quantity, orderState.type, limitPrice);
+
+      // Send order via WebSocket context - pass leverage for futures orders
+      await placeOrder(symbol, orderState.side, quantity, orderState.type, limitPrice,
+        isFuturesOrder(orderState.side) ? leverage : undefined);
 
       // Reset form on successful send
       // setOrderState(prev => ({
@@ -316,7 +377,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     } finally {
       setOrderState(prev => ({ ...prev, isPlacing: false }));
     }
-  }, [symbol, orderState.side, orderState.quantity, orderState.type, orderState.limitPrice, placeOrder, validateOrder]);
+  }, [symbol, orderState.side, orderState.quantity, orderState.type, orderState.limitPrice, placeOrder, validateOrder, isFuturesOrder, leverage]);
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isDisabled) {
@@ -354,47 +415,138 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         Place Order
       </h3>
 
-      {/* Order Side Toggle */}
-      <div style={{
-        display: 'flex',
-        marginBottom: '15px',
-        border: '1px solid #dee2e6',
-        borderRadius: '6px',
-        overflow: 'hidden'
-      }}>
-        <button
-          onClick={() => handleSideChange('buy')}
-          disabled={isDisabled}
-          style={{
-            flex: 1,
-            padding: '10px',
-            border: 'none',
-            backgroundColor: orderState.side === 'buy' ? '#28a745' : '#f8f9fa',
-            color: orderState.side === 'buy' ? 'white' : '#6c757d',
-            fontWeight: orderState.side === 'buy' ? 'bold' : 'normal',
-            cursor: isDisabled ? 'not-allowed' : 'pointer',
-            transition: 'all 0.2s'
-          }}
-        >
-          BUY
-        </button>
-        <button
-          onClick={() => handleSideChange('sell')}
-          disabled={isDisabled}
-          style={{
-            flex: 1,
-            padding: '10px',
-            border: 'none',
-            backgroundColor: orderState.side === 'sell' ? '#dc3545' : '#f8f9fa',
-            color: orderState.side === 'sell' ? 'white' : '#6c757d',
-            fontWeight: orderState.side === 'sell' ? 'bold' : 'normal',
-            cursor: isDisabled ? 'not-allowed' : 'pointer',
-            transition: 'all 0.2s'
-          }}
-        >
-          SELL
-        </button>
-      </div>
+      {/* Order Side Toggle - Different layout for spot vs futures */}
+      {tradingMode === 'spot' ? (
+        <div style={{
+          display: 'flex',
+          marginBottom: '15px',
+          border: '1px solid #dee2e6',
+          borderRadius: '6px',
+          overflow: 'hidden'
+        }}>
+          <button
+            onClick={() => handleSideChange('buy')}
+            disabled={isDisabled}
+            style={{
+              flex: 1,
+              padding: '10px',
+              border: 'none',
+              backgroundColor: getSideButtonColor('buy', orderState.side === 'buy'),
+              color: orderState.side === 'buy' ? 'white' : '#6c757d',
+              fontWeight: orderState.side === 'buy' ? 'bold' : 'normal',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s'
+            }}
+          >
+            BUY
+          </button>
+          <button
+            onClick={() => handleSideChange('sell')}
+            disabled={isDisabled}
+            style={{
+              flex: 1,
+              padding: '10px',
+              border: 'none',
+              backgroundColor: getSideButtonColor('sell', orderState.side === 'sell'),
+              color: orderState.side === 'sell' ? 'white' : '#6c757d',
+              fontWeight: orderState.side === 'sell' ? 'bold' : 'normal',
+              cursor: isDisabled ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s'
+            }}
+          >
+            SELL
+          </button>
+        </div>
+      ) : (
+        <div style={{ marginBottom: '15px' }}>
+          {/* Futures Open Positions */}
+          <div style={{
+            display: 'flex',
+            marginBottom: '8px',
+            border: '1px solid #dee2e6',
+            borderRadius: '6px',
+            overflow: 'hidden'
+          }}>
+            <button
+              onClick={() => handleSideChange('open_long')}
+              disabled={isDisabled}
+              style={{
+                flex: 1,
+                padding: '8px',
+                border: 'none',
+                backgroundColor: getSideButtonColor('open_long', orderState.side === 'open_long'),
+                color: orderState.side === 'open_long' ? 'white' : '#6c757d',
+                fontWeight: orderState.side === 'open_long' ? 'bold' : 'normal',
+                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                transition: 'all 0.2s'
+              }}
+            >
+              OPEN LONG
+            </button>
+            <button
+              onClick={() => handleSideChange('open_short')}
+              disabled={isDisabled}
+              style={{
+                flex: 1,
+                padding: '8px',
+                border: 'none',
+                backgroundColor: getSideButtonColor('open_short', orderState.side === 'open_short'),
+                color: orderState.side === 'open_short' ? 'white' : '#6c757d',
+                fontWeight: orderState.side === 'open_short' ? 'bold' : 'normal',
+                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                transition: 'all 0.2s'
+              }}
+            >
+              OPEN SHORT
+            </button>
+          </div>
+
+          {/* Futures Close Positions */}
+          <div style={{
+            display: 'flex',
+            border: '1px solid #dee2e6',
+            borderRadius: '6px',
+            overflow: 'hidden'
+          }}>
+            <button
+              onClick={() => handleSideChange('close_long')}
+              disabled={isDisabled}
+              style={{
+                flex: 1,
+                padding: '8px',
+                border: 'none',
+                backgroundColor: getSideButtonColor('close_long', orderState.side === 'close_long'),
+                color: orderState.side === 'close_long' ? 'white' : '#6c757d',
+                fontWeight: orderState.side === 'close_long' ? 'bold' : 'normal',
+                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                transition: 'all 0.2s'
+              }}
+            >
+              CLOSE LONG
+            </button>
+            <button
+              onClick={() => handleSideChange('close_short')}
+              disabled={isDisabled}
+              style={{
+                flex: 1,
+                padding: '8px',
+                border: 'none',
+                backgroundColor: getSideButtonColor('close_short', orderState.side === 'close_short'),
+                color: orderState.side === 'close_short' ? 'white' : '#6c757d',
+                fontWeight: orderState.side === 'close_short' ? 'bold' : 'normal',
+                cursor: isDisabled ? 'not-allowed' : 'pointer',
+                fontSize: '13px',
+                transition: 'all 0.2s'
+              }}
+            >
+              CLOSE SHORT
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Order Type Toggle */}
       <div style={{
@@ -839,24 +991,59 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           borderRadius: '6px',
           fontSize: '13px'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span>Subtotal:</span>
-            <span>{formatCurrency(estimatedTotal)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span>Fee (0.1%):</span>
-            <span>{formatCurrency(fee)}</span>
-          </div>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            fontWeight: 'bold',
-            borderTop: '1px solid #dee2e6',
-            paddingTop: '4px'
-          }}>
-            <span>Total:</span>
-            <span>{formatCurrency(totalWithFee)}</span>
-          </div>
+          {isFuturesOrder(orderState.side) ? (
+            // Futures order summary
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Notional Value:</span>
+                <span>{formatCurrency(estimatedTotal)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Leverage:</span>
+                <span>{leverage}x</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Required Margin:</span>
+                <span>{formatCurrency(estimatedTotal / leverage)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Fee (0.04%):</span>
+                <span>{formatCurrency(estimatedTotal * 0.0004)}</span>
+              </div>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontWeight: 'bold',
+                borderTop: '1px solid #dee2e6',
+                paddingTop: '4px'
+              }}>
+                <span>Total Margin Used:</span>
+                <span>{formatCurrency((estimatedTotal / leverage) + (estimatedTotal * 0.0004))}</span>
+              </div>
+            </>
+          ) : (
+            // Spot order summary
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Subtotal:</span>
+                <span>{formatCurrency(estimatedTotal)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>Fee (0.1%):</span>
+                <span>{formatCurrency(fee)}</span>
+              </div>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontWeight: 'bold',
+                borderTop: '1px solid #dee2e6',
+                paddingTop: '4px'
+              }}>
+                <span>Total:</span>
+                <span>{formatCurrency(totalWithFee)}</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -869,7 +1056,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           padding: '12px',
           border: 'none',
           borderRadius: '6px',
-          backgroundColor: isDisabled ? '#6c757d' : (orderState.side === 'buy' ? '#28a745' : '#dc3545'),
+          backgroundColor: isDisabled ? '#6c757d' : getSideButtonColor(orderState.side, true),
           color: 'white',
           fontSize: '16px',
           fontWeight: 'bold',
@@ -877,9 +1064,9 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           transition: 'background-color 0.2s'
         }}
       >
-        {orderState.isPlacing ? 'Placing Order...' : 
-         isDisabled ? 'Start Simulation to Trade' : 
-         `${orderState.side.toUpperCase()} ${symbol}`}
+        {orderState.isPlacing ? 'Placing Order...' :
+         isDisabled ? 'Start Simulation to Trade' :
+         `${getSideDisplayName(orderState.side)} ${symbol}`}
       </button>
 
       {/* Status Message */}

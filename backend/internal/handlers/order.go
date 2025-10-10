@@ -161,3 +161,41 @@ func (oh *OrderHandler) GetPositions(c *gin.Context) {
 	})
 }
 
+// GetFuturesPositions handles HTTP requests to get user futures positions
+// @Summary Get User Futures Positions
+// @Description Get list of current futures positions for a specific simulation
+// @Tags orders
+// @Produce json
+// @Param simulation_id query string true "Simulation ID"
+// @Success 200 {object} map[string]interface{} "List of raw futures positions"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal server error"
+// @Router /futures/positions [get]
+func (oh *OrderHandler) GetFuturesPositions(c *gin.Context) {
+	// For now, use default user ID 1
+	userID := uint(1)
+
+	// Get simulation ID from query parameter
+	simulationIDStr := c.Query("simulation_id")
+	if simulationIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "simulation_id parameter is required"})
+		return
+	}
+
+	simulationID, err := strconv.ParseUint(simulationIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid simulation_id parameter"})
+		return
+	}
+
+	futuresPositions, err := oh.portfolioService.GetFuturesPositionsRaw(userID, uint(simulationID))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"futures_positions": futuresPositions,
+	})
+}
+

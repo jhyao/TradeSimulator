@@ -12,8 +12,12 @@ type OrderType string
 type OrderStatus string
 
 const (
-	OrderSideBuy  OrderSide = "buy"
-	OrderSideSell OrderSide = "sell"
+	OrderSideBuy        OrderSide = "buy"
+	OrderSideSell       OrderSide = "sell"
+	OrderSideOpenLong   OrderSide = "open_long"
+	OrderSideOpenShort  OrderSide = "open_short"
+	OrderSideCloseLong  OrderSide = "close_long"
+	OrderSideCloseShort OrderSide = "close_short"
 	
 	OrderTypeMarket    OrderType = "market"
 	OrderTypeLimit     OrderType = "limit"
@@ -56,6 +60,9 @@ func (Order) TableName() string {
 type OrderParameters struct {
 	// Limit Order Parameters
 	LimitPrice *float64 `json:"limit_price,omitempty"` // Price for limit orders
+
+	// Futures Order Parameters
+	Leverage *float64 `json:"leverage,omitempty"` // Leverage for futures orders
 	
 	// Stop Limit Order Parameters
 	StopPrice     *float64 `json:"stop_price,omitempty"`     // Trigger price for stop orders
@@ -136,6 +143,27 @@ func (o *Order) GetStopLimitPrice() *float64 {
 // SetStopLimitPrice sets the stop limit price for stop-limit orders
 func (o *Order) SetStopLimitPrice(price float64) {
 	o.OrderParams.StopLimitPrice = &price
+}
+
+// GetLeverage returns the leverage for futures orders
+func (o *Order) GetLeverage() *float64 {
+	return o.OrderParams.Leverage
+}
+
+// SetLeverage sets the leverage for futures orders
+func (o *Order) SetLeverage(leverage float64) {
+	o.OrderParams.Leverage = &leverage
+}
+
+// IsFuturesOrder checks if this is a futures order
+func (o *Order) IsFuturesOrder() bool {
+	return o.Side == OrderSideOpenLong || o.Side == OrderSideOpenShort ||
+		o.Side == OrderSideCloseLong || o.Side == OrderSideCloseShort
+}
+
+// IsSpotOrder checks if this is a spot order
+func (o *Order) IsSpotOrder() bool {
+	return o.Side == OrderSideBuy || o.Side == OrderSideSell
 }
 
 // IsLimitOrder checks if this is a limit order

@@ -11,10 +11,11 @@ import (
 // Order control message structures
 type OrderPlaceData struct {
 	Symbol     string   `json:"symbol"`
-	Side       string   `json:"side"` // "buy" or "sell"
+	Side       string   `json:"side"` // "buy", "sell", "open_long", "open_short", "close_long", "close_short"
 	Type       string   `json:"type"` // "market" or "limit"
 	Quantity   float64  `json:"quantity"`
 	LimitPrice *float64 `json:"limit_price,omitempty"` // Required for limit orders
+	Leverage   *float64 `json:"leverage,omitempty"`    // Required for futures orders
 }
 
 type OrderCancelData struct {
@@ -72,8 +73,16 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		side = "buy"
 	case "sell":
 		side = "sell"
+	case "open_long":
+		side = "open_long"
+	case "open_short":
+		side = "open_short"
+	case "close_long":
+		side = "close_long"
+	case "close_short":
+		side = "close_short"
 	default:
-		client.SendError("Invalid order side", "Side must be 'buy' or 'sell'")
+		client.SendError("Invalid order side", "Side must be 'buy', 'sell', 'open_long', 'open_short', 'close_long', or 'close_short'")
 		return nil
 	}
 
@@ -98,6 +107,20 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		return nil
 	}
 
+	// Validate futures orders
+	isFuturesOrder := side == "open_long" || side == "open_short" || side == "close_long" || side == "close_short"
+	if isFuturesOrder {
+		// Validate leverage for futures orders
+		if orderData.Leverage == nil {
+			client.SendError("Missing leverage", "Leverage is required for futures orders")
+			return nil
+		}
+		if *orderData.Leverage < 1.0 || *orderData.Leverage > 20.0 {
+			client.SendError("Invalid leverage", "Leverage must be between 1x and 20x")
+			return nil
+		}
+	}
+
 	// Check if simulation is running and get current data
 	status := client.SimulationEngine.GetStatus()
 	if !status.IsRunning {
@@ -115,10 +138,21 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 	var trade *models.Trade
 	var err error
 
+	// Create order with appropriate parameters
+	orderSide := models.OrderSide(side)
+
 	if orderType == "market" {
-		order, trade, err = client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, status.CurrentPrice, status.SimulationTime)
+		if isFuturesOrder {
+			order, trade, err = client.OrderEngine.ExecuteFuturesMarketOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.Leverage, status.CurrentPrice, status.SimulationTime)
+		} else {
+			order, trade, err = client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, status.CurrentPrice, status.SimulationTime)
+		}
 	} else if orderType == "limit" {
-		order, err = client.OrderEngine.PlaceLimitOrder(1, status.SimulationID, orderData.Symbol, models.OrderSide(side), orderData.Quantity, *orderData.LimitPrice, status.SimulationTime)
+		if isFuturesOrder {
+			order, err = client.OrderEngine.PlaceFuturesLimitOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.Leverage, *orderData.LimitPrice, status.SimulationTime)
+		} else {
+			order, err = client.OrderEngine.PlaceLimitOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.LimitPrice, status.SimulationTime)
+		}
 		// Limit orders don't have immediate trades, they are placed as pending
 		trade = nil
 	}

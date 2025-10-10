@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"encoding/json"
+	"tradesimulator/internal/models"
 	"tradesimulator/internal/types"
 )
 
@@ -12,6 +13,7 @@ type SimulationStartData struct {
 	Interval       string  `json:"interval"`
 	Speed          int     `json:"speed"`
 	InitialFunding float64 `json:"initialFunding"`
+	Mode           string  `json:"mode"` // "spot" or "future"
 }
 
 type SimulationSetSpeedData struct {
@@ -77,7 +79,24 @@ func (h *SimulationEventHandlerImpl) handleStart(client *Client, data interface{
 		return nil
 	}
 
-	if err := client.SimulationEngine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding); err != nil {
+	// Validate trading mode
+	if startData.Mode == "" {
+		startData.Mode = "spot" // Default to spot trading
+	}
+	if startData.Mode != "spot" && startData.Mode != "future" {
+		client.SendError("Invalid trading mode", "Mode must be 'spot' or 'future'")
+		return nil
+	}
+
+	// Convert string mode to SimulationMode type
+	var mode models.SimulationMode
+	if startData.Mode == "future" {
+		mode = models.SimulationModeFuture
+	} else {
+		mode = models.SimulationModeSpot
+	}
+
+	if err := client.SimulationEngine.Start(startData.Symbol, startData.Interval, startData.StartTime, startData.Speed, startData.InitialFunding, mode); err != nil {
 		client.SendError("Failed to start simulation", err.Error())
 		return nil
 	}

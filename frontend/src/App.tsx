@@ -7,6 +7,7 @@ import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from '.
 import OrderPanel from './components/OrderPanel';
 import Portfolio from './components/Portfolio';
 import TradingTabs from './components/TradingTabs';
+import TradingModePanel from './components/TradingModePanel';
 import FloatingMessage from './components/FloatingMessage';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { PositionsProvider } from './contexts/PositionsContext';
@@ -54,7 +55,7 @@ function AppContent() {
     simulationId: number | null;
   } | null>(null);
 
-  const { 
+  const {
     lastSimulationUpdate,
     currentSimulationStatus,
     connectionState,
@@ -67,7 +68,11 @@ function AppContent() {
     setSpeed: wsSetSpeed,
     setTimeframe: wsSetTimeframe,
     resetSimulationStatus,
-    setHistoricalSimulationStatus
+    setHistoricalSimulationStatus,
+    tradingMode,
+    leverage,
+    setTradingMode,
+    setLeverage
   } = useWebSocketContext();
 
   // No need to sync on connection - backend sends status_update when simulation starts
@@ -152,9 +157,9 @@ function AppContent() {
     resetSimulationStatus();
 
     try {
-      await wsStartSimulation(symbol, selectedStartTime, timeframe, simulationState.speed, initialFunding);
-      setSimulationState(prev => ({ 
-        ...prev, 
+      await wsStartSimulation(symbol, selectedStartTime, timeframe, simulationState.speed, initialFunding, tradingMode);
+      setSimulationState(prev => ({
+        ...prev,
         state: 'playing',
         startTime: selectedStartTime.getTime(),
         simulationTime: selectedStartTime.getTime()
@@ -200,7 +205,7 @@ function AppContent() {
     } catch (error) {
       console.error('Failed to resume simulation:', error);
     }
-  }, [wsResumeSimulation, lastSimulationParams, simulationState.state, simulationState.speed, timeframe]);
+  }, [wsResumeSimulation, lastSimulationParams, simulationState.state, simulationState.speed, timeframe, tradingMode]);
 
   const handleStopSimulation = useCallback(async () => {
     try {
@@ -235,6 +240,7 @@ function AppContent() {
     setSymbol(historicalSimulation.symbol);
     setSelectedStartTime(new Date(historicalSimulation.start_sim_time));
     setInitialFunding(historicalSimulation.initial_funding);
+    setTradingMode(historicalSimulation.mode || 'spot'); // Sync trading mode
     
     // 2. Update simulation state with historical time
     setSimulationState(prev => ({
@@ -270,7 +276,7 @@ function AppContent() {
     });
 
     console.log('Historical simulation loaded successfully');
-  }, [setHistoricalSimulationStatus]);
+  }, [setHistoricalSimulationStatus, setTradingMode]);
 
 
   // Debounce timer for speed changes
@@ -355,7 +361,7 @@ function AppContent() {
           Trade Simulator
         </h1>
         
-        {/* 5-Block Control Panel */}
+        {/* 6-Block Control Panel */}
         <div style={{
           display: 'flex',
           height: '120px',
@@ -381,7 +387,7 @@ function AppContent() {
               disabled={simulationState.state !== 'stopped'}
             />
           </div>
-          
+
           {/* Block 2: Start Time Picker */}
           <div style={{
             flex: '1.2',
@@ -411,8 +417,8 @@ function AppContent() {
             justifyContent: 'center'
           }}>
             <div>
-              <label style={{ 
-                fontSize: '12px', 
+              <label style={{
+                fontSize: '12px',
                 color: '#666',
                 display: 'block',
                 marginBottom: '4px'
@@ -439,7 +445,7 @@ function AppContent() {
               />
             </div>
           </div>
-          
+
           {/* Block 4: Speed Controls */}
           <div style={{
             flex: '1.5',
@@ -463,8 +469,26 @@ function AppContent() {
               canResume={canResume()}
             />
           </div>
-          
-          {/* Block 5: Start/Stop Controls */}
+
+          {/* Block 5: Trading Mode */}
+          <div style={{
+            flex: '1',
+            padding: '15px',
+            borderRight: '1px solid #dee2e6',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center'
+          }}>
+            <TradingModePanel
+              tradingMode={tradingMode}
+              leverage={leverage}
+              onTradingModeChange={setTradingMode}
+              onLeverageChange={setLeverage}
+              disabled={simulationState.state !== 'stopped'}
+            />
+          </div>
+
+          {/* Block 6: Start/Stop Controls */}
           <div style={{
             flex: '1',
             padding: '15px',

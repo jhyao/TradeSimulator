@@ -40,9 +40,9 @@ func main() {
 	}
 
 	// Run database migrations
-	// if err := database.AutoMigrate(); err != nil {
-	// 	log.Fatalf("Failed to run database migrations: %v", err)
-	// }
+	if err := database.AutoMigrate(); err != nil {
+		log.Fatalf("Failed to run database migrations: %v", err)
+	}
 
 	// Initialize Gin router
 	if cfg.Environment == "production" {
@@ -136,6 +136,11 @@ func main() {
 		positions := api.Group("/positions")
 		{
 			positions.GET("", orderHandler.GetPositions)
+		}
+
+		futures := api.Group("/futures")
+		{
+			futures.GET("/positions", orderHandler.GetFuturesPositions)
 		}
 	}
 

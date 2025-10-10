@@ -117,14 +117,28 @@ const Chart: React.FC<ChartProps> = ({
         // Filter trades for current symbol
         const symbolTrades = trades.filter((trade: any) => trade.symbol === symbol);
         
+        // Helper function to get trade side color and position
+        const getTradeVisuals = (side: string) => {
+          const sideNormalized = side.toLowerCase();
+          const isGreenSide = ['buy', 'open_long', 'close_short'].includes(sideNormalized);
+          return {
+            color: isGreenSide ? '#28a745' : '#dc3545',
+            position: isGreenSide ? 'belowBar' as const : 'aboveBar' as const,
+            shape: isGreenSide ? 'arrowUp' as const : 'arrowDown' as const
+          };
+        };
+
         // Create markers for all trades
-        const markers = symbolTrades.map((trade: any) => ({
-          time: Math.floor(trade.executed_at / 1000) as any,
-          position: trade.side === 'buy' ? 'belowBar' as const : 'aboveBar' as const,
-          color: trade.side === 'buy' ? '#26a69a' : '#ef5350',
-          shape: trade.side === 'buy' ? 'arrowUp' as const : 'arrowDown' as const,
-          text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
-        }));
+        const markers = symbolTrades.map((trade: any) => {
+          const visuals = getTradeVisuals(trade.side);
+          return {
+            time: Math.floor(trade.executed_at / 1000) as any,
+            position: visuals.position,
+            color: visuals.color,
+            shape: visuals.shape,
+            text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
+          };
+        });
 
         return markers;
       }

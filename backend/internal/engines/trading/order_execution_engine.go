@@ -23,18 +23,21 @@ const (
 
 // OrderExecutionEngine handles core order execution logic
 type OrderExecutionEngine struct {
-	orderDAO    trading.OrderDAOInterface
-	tradeDAO    trading.TradeDAOInterface
-	positionDAO trading.PositionDAOInterface
-	client      ClientMessageSender
-	db          *gorm.DB
-	orderBook   *OrderBook
+	orderDAO      trading.OrderDAOInterface
+	tradeDAO      trading.TradeDAOInterface
+	positionDAO   trading.PositionDAOInterface
+	client        ClientMessageSender
+	db            *gorm.DB
+	orderBook     *OrderBook
+	futuresEngine FuturesEngineInterface
 }
 
 // OrderExecutionEngineInterface defines the contract for order execution
 type OrderExecutionEngineInterface interface {
 	ExecuteMarketOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, currentPrice float64, simulationTime int64) (*models.Order, *models.Trade, error)
 	PlaceLimitOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, limitPrice float64, simulationTime int64) (*models.Order, error)
+	ExecuteFuturesMarketOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, leverage, currentPrice float64, simulationTime int64) (*models.Order, *models.Trade, error)
+	PlaceFuturesLimitOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, leverage, limitPrice float64, simulationTime int64) (*models.Order, error)
 	ProcessPriceUpdate(symbol string, currentPrice float64, simulationTime int64) ([]*models.Trade, error)
 	CancelOrder(orderID uint) (*models.Order, error)
 	LoadPendingOrders(simulationID uint) error
@@ -45,13 +48,15 @@ type OrderExecutionEngineInterface interface {
 
 // NewOrderExecutionEngine creates a new order execution engine
 func NewOrderExecutionEngine(orderDAO trading.OrderDAOInterface, tradeDAO trading.TradeDAOInterface, positionDAO trading.PositionDAOInterface, client ClientMessageSender, db *gorm.DB) OrderExecutionEngineInterface {
+	futuresEngine := NewFuturesEngine(db, positionDAO)
 	return &OrderExecutionEngine{
-		orderDAO:    orderDAO,
-		tradeDAO:    tradeDAO,
-		positionDAO: positionDAO,
-		client:      client,
-		db:          db,
-		orderBook:   NewOrderBook(),
+		orderDAO:      orderDAO,
+		tradeDAO:      tradeDAO,
+		positionDAO:   positionDAO,
+		client:        client,
+		db:            db,
+		orderBook:     NewOrderBook(),
+		futuresEngine: futuresEngine,
 	}
 }
 
@@ -200,7 +205,15 @@ func (oe *OrderExecutionEngine) ProcessPriceUpdate(symbol string, currentPrice f
 		}
 
 		// Execute the limit order at current market price
-		trade, err := oe.executeOrder(tx, order, currentPrice, simulationTime)
+		var trade *models.Trade
+		var err error
+
+		if order.IsFuturesOrder() {
+			trade, err = oe.executeFuturesOrder(tx, order, currentPrice, simulationTime)
+		} else {
+			trade, err = oe.executeOrder(tx, order, currentPrice, simulationTime)
+		}
+
 		if err != nil {
 			tx.Rollback()
 			log.Printf("Failed to execute limit order %d: %v", order.ID, err)
@@ -487,6 +500,185 @@ func (oe *OrderExecutionEngine) ValidateLimitOrder(userID, simulationID uint, sy
 // CalculateFee calculates trading fee
 func (oe *OrderExecutionEngine) CalculateFee(quantity, price float64) float64 {
 	return quantity * price * DefaultTradingFeeRate
+}
+
+// ExecuteFuturesMarketOrder executes a futures market order immediately
+func (oe *OrderExecutionEngine) ExecuteFuturesMarketOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, leverage, currentPrice float64, simulationTime int64) (*models.Order, *models.Trade, error) {
+	// Validate inputs
+	if !models.ValidateLeverage(leverage) {
+		return nil, nil, fmt.Errorf("invalid leverage: %.2f", leverage)
+	}
+
+	if currentPrice <= 0 {
+		return nil, nil, fmt.Errorf("invalid current price: %f", currentPrice)
+	}
+
+	// Create order record
+	order := &models.Order{
+		UserID:       userID,
+		SimulationID: &simulationID,
+		Symbol:       symbol,
+		BaseCurrency: "USDT",
+		Side:         side,
+		Type:         models.OrderTypeMarket,
+		Quantity:     quantity,
+		Status:       models.OrderStatusPending,
+		PlacedAt:     simulationTime,
+		OrderParams: models.OrderParameters{
+			Leverage: &leverage,
+		},
+	}
+
+	// Start transaction
+	tx := oe.db.Begin()
+	if tx.Error != nil {
+		return nil, nil, fmt.Errorf("failed to start transaction: %w", tx.Error)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Save order
+	if err := oe.orderDAO.CreateWithTx(tx, order); err != nil {
+		tx.Rollback()
+		return nil, nil, fmt.Errorf("failed to create order: %w", err)
+	}
+
+	log.Printf("Created futures order %d: %s %s %.8f %s at simulation price %.8f, leverage %.2fx",
+		order.ID, string(side), symbol, quantity, string(models.OrderTypeMarket), currentPrice, leverage)
+
+	// Send order placed notification to client
+	oe.sendOrderUpdate(types.OrderPlaced, order, nil)
+
+	// Execute futures order
+	trade, err := oe.executeFuturesOrder(tx, order, currentPrice, simulationTime)
+	if err != nil {
+		tx.Rollback()
+		return nil, nil, fmt.Errorf("failed to execute futures order: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Printf("Futures order %d executed successfully, trade %d created", order.ID, trade.ID)
+
+	// Send order executed notification to client
+	oe.sendOrderUpdate(types.OrderExecuted, order, trade)
+
+	return order, trade, nil
+}
+
+// PlaceFuturesLimitOrder places a futures limit order
+func (oe *OrderExecutionEngine) PlaceFuturesLimitOrder(userID, simulationID uint, symbol string, side models.OrderSide, quantity, leverage, limitPrice float64, simulationTime int64) (*models.Order, error) {
+	// Validate inputs
+	if !models.ValidateLeverage(leverage) {
+		return nil, fmt.Errorf("invalid leverage: %.2f", leverage)
+	}
+
+	if limitPrice <= 0 {
+		return nil, fmt.Errorf("limit price must be positive: %f", limitPrice)
+	}
+
+	// Create limit order record
+	order := &models.Order{
+		UserID:       userID,
+		SimulationID: &simulationID,
+		Symbol:       symbol,
+		BaseCurrency: "USDT",
+		Side:         side,
+		Type:         models.OrderTypeLimit,
+		Quantity:     quantity,
+		Status:       models.OrderStatusPending,
+		PlacedAt:     simulationTime,
+		OrderParams: models.OrderParameters{
+			LimitPrice: &limitPrice,
+			Leverage:   &leverage,
+		},
+	}
+
+	// Save order to database
+	if err := oe.orderDAO.Create(order); err != nil {
+		return nil, fmt.Errorf("failed to create futures limit order: %w", err)
+	}
+
+	// Add order to order book for execution tracking
+	if err := oe.orderBook.AddOrder(order); err != nil {
+		log.Printf("Failed to add futures order %d to order book: %v", order.ID, err)
+	}
+
+	log.Printf("Created futures limit order %d: %s %s %.8f %s at limit price %.8f, leverage %.2fx",
+		order.ID, string(side), symbol, quantity, string(models.OrderTypeLimit), limitPrice, leverage)
+
+	// Send order placed notification to client
+	oe.sendOrderUpdate(types.OrderPlaced, order, nil)
+
+	return order, nil
+}
+
+// executeFuturesOrder executes a futures order using the futures engine
+func (oe *OrderExecutionEngine) executeFuturesOrder(tx *gorm.DB, order *models.Order, price float64, simulationTime int64) (*models.Trade, error) {
+	leverage := 1.0
+	if order.OrderParams.Leverage != nil {
+		leverage = *order.OrderParams.Leverage
+	}
+
+	// Calculate fee for futures
+	notionalValue := order.Quantity * price
+	fee := models.CalculateFuturesFee(notionalValue, false) // Assume taker for market orders
+
+	var err error
+	var futuresPosition *models.FuturesPosition
+
+	// Determine if opening or closing position
+	if order.Side == models.OrderSideOpenLong || order.Side == models.OrderSideOpenShort {
+		// Opening position
+		futuresPosition, err = oe.futuresEngine.OpenPosition(order.UserID, *order.SimulationID, order.Symbol, order.Side, order.Quantity, leverage, price)
+	} else if order.Side == models.OrderSideCloseLong || order.Side == models.OrderSideCloseShort {
+		// Closing position
+		futuresPosition, err = oe.futuresEngine.ClosePosition(order.UserID, *order.SimulationID, order.Symbol, order.Side, order.Quantity, price)
+	} else {
+		return nil, fmt.Errorf("invalid futures order side: %s", order.Side)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute futures operation: %w", err)
+	}
+
+	// Update order status
+	order.Status = models.OrderStatusExecuted
+	order.ExecutedAt = &simulationTime
+	order.ExecutedPrice = &price
+
+	if err := oe.orderDAO.UpdateWithTx(tx, order); err != nil {
+		return nil, fmt.Errorf("failed to update futures order: %w", err)
+	}
+
+	// Create trade record
+	trade := &models.Trade{
+		OrderID:      order.ID,
+		UserID:       order.UserID,
+		SimulationID: order.SimulationID,
+		Symbol:       order.Symbol,
+		BaseCurrency: order.BaseCurrency,
+		Side:         order.Side,
+		Quantity:     order.Quantity,
+		Price:        price,
+		Fee:          fee,
+		ExecutedAt:   simulationTime,
+	}
+
+	if err := oe.tradeDAO.CreateWithTx(tx, trade); err != nil {
+		return nil, fmt.Errorf("failed to create futures trade: %w", err)
+	}
+
+	log.Printf("Executed futures order %d: %s %s %.8f at %.8f, fee: %.8f, position: %+v",
+		order.ID, string(order.Side), order.Symbol, order.Quantity, price, fee, futuresPosition)
+
+	return trade, nil
 }
 
 // sendOrderUpdate sends order updates to the client via WebSocket

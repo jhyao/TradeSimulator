@@ -122,7 +122,18 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
   };
 
   const getSideColor = (side: string) => {
-    return side.toLowerCase() === 'buy' ? '#28a745' : '#dc3545';
+    switch (side.toLowerCase()) {
+      case 'buy':
+      case 'open_long':
+      case 'close_short':
+        return '#28a745'; // Green
+      case 'sell':
+      case 'open_short':
+      case 'close_long':
+        return '#dc3545'; // Red
+      default:
+        return '#6c757d'; // Gray
+    }
   };
 
   const formatDateTime = (dateString: string) => {

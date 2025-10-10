@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { usePositions, CalculatedPosition } from '../contexts/PositionsContext';
+import { usePositions, CalculatedPosition, CalculatedFuturesPosition } from '../contexts/PositionsContext';
 import { formatCurrency, formatPercentage } from '../utils/numberFormat';
 
 interface PortfolioProps {
@@ -9,20 +9,26 @@ interface PortfolioProps {
 
 interface PortfolioSummary {
   positions: CalculatedPosition[];
+  futuresPositions: CalculatedFuturesPosition[];
   totalValue: number;
   totalPnL: number;
   cashBalance: number;
+  marginUsed: number;
+  futuresPnL: number;
 }
 
 const Portfolio: React.FC<PortfolioProps> = ({ 
   initialFunding
 }) => {
-  const { calculatedPositions, loading, error, lastRefresh, fetchPositions } = usePositions();
+  const { calculatedPositions, calculatedFuturesPositions, loading, error, lastRefresh, fetchPositions, fetchFuturesPositions } = usePositions();
 
   const portfolioData = useMemo((): PortfolioSummary => {
     let totalValue = 0;
     let cashBalance = 0;
+    let marginUsed = 0;
+    let futuresPnL = 0;
 
+    // Calculate spot positions
     calculatedPositions.forEach(calcPos => {
       if (calcPos.position.symbol === 'USDT') {
         cashBalance = calcPos.position.quantity;
@@ -30,15 +36,26 @@ const Portfolio: React.FC<PortfolioProps> = ({
       totalValue += calcPos.marketValue;
     });
 
+    // Calculate futures positions
+    calculatedFuturesPositions.forEach(calcFuturesPos => {
+      marginUsed += calcFuturesPos.position.margin_amount;
+      futuresPnL += calcFuturesPos.unrealizedPnL;
+    });
+
+    // Total value includes futures P&L
+    totalValue += futuresPnL;
     const totalPnL = totalValue - initialFunding;
 
     return {
       positions: calculatedPositions,
+      futuresPositions: calculatedFuturesPositions,
       totalValue,
       totalPnL,
-      cashBalance
+      cashBalance,
+      marginUsed,
+      futuresPnL
     };
-  }, [calculatedPositions, initialFunding]);
+  }, [calculatedPositions, calculatedFuturesPositions, initialFunding]);
 
 
   const formatPercent = (value: number) => {
@@ -83,7 +100,10 @@ const Portfolio: React.FC<PortfolioProps> = ({
         </h3>
         <div>
           <button
-            onClick={fetchPositions}
+            onClick={() => {
+              fetchPositions();
+              fetchFuturesPositions();
+            }}
             disabled={loading}
             style={{
               padding: '6px 12px',
@@ -119,8 +139,8 @@ const Portfolio: React.FC<PortfolioProps> = ({
           {/* Portfolio Summary */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '15px',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            gap: '12px',
             marginBottom: '20px',
             padding: '15px',
             backgroundColor: '#f8f9fa',
@@ -130,39 +150,61 @@ const Portfolio: React.FC<PortfolioProps> = ({
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
                 Cash Balance
               </div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
                 {formatCurrency(portfolioData.cashBalance)}
               </div>
             </div>
-            
+
+            <div>
+              <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
+                Margin Used
+              </div>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', color: portfolioData.marginUsed > 0 ? '#dc3545' : '#6c757d' }}>
+                {formatCurrency(portfolioData.marginUsed)}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
+                Futures P&L
+              </div>
+              <div style={{
+                fontSize: '14px',
+                fontWeight: 'bold',
+                color: portfolioData.futuresPnL >= 0 ? '#28a745' : '#dc3545'
+              }}>
+                {portfolioData.futuresPnL >= 0 ? '+' : ''}{formatCurrency(portfolioData.futuresPnL)}
+              </div>
+            </div>
+
             <div>
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
                 Total Value
               </div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+              <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
                 {formatCurrency(portfolioData.totalValue)}
               </div>
             </div>
-            
+
             <div>
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
                 Total P&L
               </div>
               <div style={{
-                fontSize: '16px',
+                fontSize: '14px',
                 fontWeight: 'bold',
                 color: portfolioData.totalPnL >= 0 ? '#28a745' : '#dc3545'
               }}>
                 {portfolioData.totalPnL >= 0 ? '+' : ''}{formatCurrency(portfolioData.totalPnL)}
               </div>
             </div>
-            
+
             <div>
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
                 Total Return
               </div>
               <div style={{
-                fontSize: '16px',
+                fontSize: '14px',
                 fontWeight: 'bold',
                 color: portfolioData.totalPnL >= 0 ? '#28a745' : '#dc3545'
               }}>
@@ -170,6 +212,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
               </div>
             </div>
           </div>
+
 
 
           {lastRefresh && (

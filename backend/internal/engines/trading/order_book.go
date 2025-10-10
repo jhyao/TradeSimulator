@@ -133,10 +133,15 @@ func (ob *OrderBook) AddOrder(order *models.Order) error {
 	book.OrderIndex[order.ID] = order
 	
 	// Add order to appropriate heap
-	if order.Side == models.OrderSideBuy {
+	// For futures orders:
+	// - open_long and close_short behave like buy orders (execute when price <= limit)
+	// - open_short and close_long behave like sell orders (execute when price >= limit)
+	if order.Side == models.OrderSideBuy || order.Side == models.OrderSideOpenLong || order.Side == models.OrderSideCloseShort {
 		heap.Push(book.BuyOrders, order)
-	} else {
+	} else if order.Side == models.OrderSideSell || order.Side == models.OrderSideOpenShort || order.Side == models.OrderSideCloseLong {
 		heap.Push(book.SellOrders, order)
+	} else {
+		return fmt.Errorf("unsupported order side: %s", order.Side)
 	}
 	
 	log.Printf("Added %s limit order %d to order book: %s %.8f at %.8f",
@@ -157,7 +162,7 @@ func (ob *OrderBook) RemoveOrder(orderID uint) (*models.Order, error) {
 			delete(book.OrderIndex, orderID)
 			
 			// Remove from appropriate heap
-			if order.Side == models.OrderSideBuy {
+			if order.Side == models.OrderSideBuy || order.Side == models.OrderSideOpenLong || order.Side == models.OrderSideCloseShort {
 				// Find and remove from buy orders heap
 				for i, o := range *book.BuyOrders {
 					if o.ID == orderID {
@@ -165,7 +170,7 @@ func (ob *OrderBook) RemoveOrder(orderID uint) (*models.Order, error) {
 						break
 					}
 				}
-			} else {
+			} else if order.Side == models.OrderSideSell || order.Side == models.OrderSideOpenShort || order.Side == models.OrderSideCloseLong {
 				// Find and remove from sell orders heap
 				for i, o := range *book.SellOrders {
 					if o.ID == orderID {
@@ -334,9 +339,9 @@ func (ob *OrderBook) LoadOrdersFromDatabase(orders []*models.Order) error {
 		}
 		
 		loadedCount++
-		if order.Side == models.OrderSideBuy {
+		if order.Side == models.OrderSideBuy || order.Side == models.OrderSideOpenLong || order.Side == models.OrderSideCloseShort {
 			buyOrdersCount++
-		} else {
+		} else if order.Side == models.OrderSideSell || order.Side == models.OrderSideOpenShort || order.Side == models.OrderSideCloseLong {
 			sellOrdersCount++
 		}
 	}
@@ -368,10 +373,15 @@ func (ob *OrderBook) addOrderUnsafe(order *models.Order) error {
 	book.OrderIndex[order.ID] = order
 	
 	// Add order to appropriate heap
-	if order.Side == models.OrderSideBuy {
+	// For futures orders:
+	// - open_long and close_short behave like buy orders (execute when price <= limit)
+	// - open_short and close_long behave like sell orders (execute when price >= limit)
+	if order.Side == models.OrderSideBuy || order.Side == models.OrderSideOpenLong || order.Side == models.OrderSideCloseShort {
 		heap.Push(book.BuyOrders, order)
-	} else {
+	} else if order.Side == models.OrderSideSell || order.Side == models.OrderSideOpenShort || order.Side == models.OrderSideCloseLong {
 		heap.Push(book.SellOrders, order)
+	} else {
+		return fmt.Errorf("unsupported order side: %s", order.Side)
 	}
 	
 	return nil

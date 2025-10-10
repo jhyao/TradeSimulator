@@ -134,7 +134,7 @@ func (se *SimulationEngine) SetClient(client ClientMessageSender) {
 	se.client = client
 }
 
-func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int, initialFunding float64) error {
+func (se *SimulationEngine) Start(symbol, interval string, startTime int64, speed int, initialFunding float64, mode models.SimulationMode) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 
@@ -191,7 +191,7 @@ func (se *SimulationEngine) Start(symbol, interval string, startTime int64, spee
 		Speed:     speed,
 		Timeframe: interval,
 	}
-	simulationRecord, err := se.simulationDAO.CreateSimulationRecord(1, symbol, startTime, 0, initialFunding, models.SimulationModeSpot, extraConfig)
+	simulationRecord, err := se.simulationDAO.CreateSimulationRecord(1, symbol, startTime, 0, initialFunding, mode, extraConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create simulation record: %w", err)
 	}

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ConnectionState } from '../hooks/useWebSocket';
-import TradingView from './TradingView';
+import Positions from './Positions';
 import OrderHistory from './OrderHistory';
 import TradeHistory from './TradeHistory';
 import SimulationHistory from './SimulationHistory';
@@ -74,7 +74,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
     return (
       <>
         <div style={{ display: activeTab === 'positions' ? 'block' : 'none' }}>
-          <TradingView 
+          <Positions
             onRefreshReady={(refreshFn) => positionsRefreshRef.current = refreshFn}
             isActive={activeTab === 'positions'}
           />

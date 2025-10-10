@@ -3,7 +3,7 @@ import { usePositions } from '../contexts/PositionsContext';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
 
-interface TradingViewProps {
+interface PositionsProps {
   onRefreshReady?: (refreshFn: () => void) => void;
   isActive?: boolean;
 }
@@ -27,9 +27,23 @@ interface PendingOrder {
   };
 }
 
-const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = true }) => {
-  const { calculatedPositions, loading: positionsLoading, error: positionsError, fetchPositions } = usePositions();
-  const { placeOrder, cancelOrder, currentSimulationStatus, addFloatingMessage, lastOrderNotification } = useWebSocketContext();
+const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }) => {
+  const {
+    calculatedPositions,
+    calculatedFuturesPositions,
+    loading: positionsLoading,
+    error: positionsError,
+    fetchPositions,
+    fetchFuturesPositions
+  } = usePositions();
+  const {
+    placeOrder,
+    cancelOrder,
+    currentSimulationStatus,
+    addFloatingMessage,
+    lastOrderNotification,
+    tradingMode
+  } = useWebSocketContext();
   const [closingPositions, setClosingPositions] = useState<Set<string>>(new Set());
 
   // Pending orders state
@@ -46,9 +60,9 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
     if (!currentSimulationStatus) {
       return;
     }
-    
+
     let simulationId = currentSimulationStatus.simulationID;
-    
+
     if (!currentSimulationStatus.isRunning && !simulationId) {
       setPendingOrders([]);
       return;
@@ -58,7 +72,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
     setPendingError(null);
 
     try {
-      const url = simulationId 
+      const url = simulationId
         ? `/api/v1/orders?simulation_id=${simulationId}&status=pending&limit=100`
         : '/api/v1/orders?status=pending&limit=100';
 
@@ -85,8 +99,9 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
   // Combined refresh function
   const refreshAll = useCallback(() => {
     fetchPositions();
+    fetchFuturesPositions();
     fetchPendingOrders();
-  }, [fetchPositions, fetchPendingOrders]);
+  }, [fetchPositions, fetchFuturesPositions, fetchPendingOrders]);
 
   // Expose refresh function to parent
   useEffect(() => {
@@ -108,23 +123,24 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
           // Also refresh positions in case of executed orders
           if (type === 'order_executed') {
             fetchPositions();
+            fetchFuturesPositions();
           }
         }, 500);
       }
     }
-  }, [lastOrderNotification, fetchPendingOrders, fetchPositions]);
+  }, [lastOrderNotification, fetchPendingOrders, fetchPositions, fetchFuturesPositions]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
   };
 
-  const handleClosePosition = async (symbol: string, quantity: number) => {
+  const handleCloseSpotPosition = async (symbol: string, quantity: number) => {
     try {
       setClosingPositions(prev => new Set(prev).add(symbol));
-      
+
       // Place a sell order for the full quantity to close the position
       await placeOrder(symbol, 'sell', Math.abs(quantity));
-      
+
       // The auto-refresh effect will handle refreshing data when order is placed/executed
       // Just reset the closing state after a short delay
       setTimeout(() => {
@@ -134,7 +150,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
           return newSet;
         });
       }, 1000);
-      
+
     } catch (error) {
       console.error('Failed to close position:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to close position';
@@ -147,13 +163,46 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
     }
   };
 
+  const handleCloseFuturesPosition = async (symbol: string, positionSide: string, size: number) => {
+    try {
+      const positionKey = `${symbol}-${positionSide}`;
+      setClosingPositions(prev => new Set(prev).add(positionKey));
+
+      // Determine the correct close side based on position side
+      const closeSide = positionSide === 'long' ? 'close_long' : 'close_short';
+
+      // Place a close order for the full size
+      await placeOrder(symbol, closeSide, Math.abs(size));
+
+      // Reset the closing state after a short delay
+      setTimeout(() => {
+        setClosingPositions(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(positionKey);
+          return newSet;
+        });
+      }, 1000);
+
+    } catch (error) {
+      console.error('Failed to close futures position:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to close futures position';
+      addFloatingMessage(errorMessage, 'error');
+      const positionKey = `${symbol}-${positionSide}`;
+      setClosingPositions(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(positionKey);
+        return newSet;
+      });
+    }
+  };
+
   const handleCancelOrder = async (orderId: number) => {
     try {
       setCancellingOrders(prev => new Set(prev).add(orderId));
-      
+
       // Send cancel order message through WebSocket
       await cancelOrder(orderId);
-      
+
       // The auto-refresh effect will handle refreshing pending orders
       // Just reset the cancelling state after a short delay
       setTimeout(() => {
@@ -163,7 +212,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
           return newSet;
         });
       }, 1000);
-      
+
     } catch (error) {
       console.error('Failed to cancel order:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to cancel order';
@@ -186,7 +235,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
     return '-';
   };
 
-  const loading = positionsLoading && !calculatedPositions.length;
+  const loading = positionsLoading && !calculatedPositions.length && !calculatedFuturesPositions.length;
 
   if (loading) {
     return (
@@ -198,7 +247,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
         boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
         textAlign: 'center'
       }}>
-        <div>Loading trading view...</div>
+        <div>Loading positions...</div>
       </div>
     );
   }
@@ -206,9 +255,9 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
   if (positionsError) {
     return (
       <div style={{ padding: '20px' }}>
-        <div style={{ 
-          color: '#dc3545', 
-          backgroundColor: '#f8d7da', 
+        <div style={{
+          color: '#dc3545',
+          backgroundColor: '#f8d7da',
           border: '1px solid #f5c6cb',
           padding: '12px',
           borderRadius: '4px'
@@ -234,13 +283,18 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
   }
 
   // Filter out USDT positions since they're shown as cash balance in portfolio summary
-  const tradingPositions = calculatedPositions?.filter(pos => pos.position.symbol !== 'USDT') || [];
+  const spotPositions = calculatedPositions?.filter(pos => pos.position.symbol !== 'USDT') || [];
+  const futuresPositions = calculatedFuturesPositions || [];
+
+  // Determine which positions to show based on trading mode
+  const showSpotPositions = tradingMode === 'spot';
+  const showFuturesPositions = tradingMode === 'future';
 
   return (
     <div style={{ padding: '0' }}>
       {/* Positions Section */}
       <div style={{ marginBottom: '20px' }}>
-        <div style={{ 
+        <div style={{
           padding: '12px 16px',
           backgroundColor: '#f8f9fa',
           borderBottom: '1px solid #dee2e6',
@@ -248,91 +302,105 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
           fontSize: '14px',
           color: '#495057'
         }}>
-          Positions
+          {showSpotPositions ? 'Spot Positions' : 'Futures Positions'}
         </div>
-        
-        {tradingPositions.length === 0 ? (
-          <div style={{ 
-            padding: '40px', 
+
+        {showSpotPositions && spotPositions.length === 0 && (
+          <div style={{
+            padding: '40px',
             textAlign: 'center',
             color: '#6c757d'
           }}>
-            <div style={{ fontSize: '16px', marginBottom: '10px' }}>No positions</div>
-            <div style={{ fontSize: '14px' }}>Open a position to see your holdings here</div>
+            <div style={{ fontSize: '16px', marginBottom: '10px' }}>No spot positions</div>
+            <div style={{ fontSize: '14px' }}>Buy assets to see your holdings here</div>
           </div>
-        ) : (
-          <div style={{ 
+        )}
+
+        {showFuturesPositions && futuresPositions.length === 0 && (
+          <div style={{
+            padding: '40px',
+            textAlign: 'center',
+            color: '#6c757d'
+          }}>
+            <div style={{ fontSize: '16px', marginBottom: '10px' }}>No futures positions</div>
+            <div style={{ fontSize: '14px' }}>Open long/short positions to see them here</div>
+          </div>
+        )}
+
+        {/* Spot Positions Table */}
+        {showSpotPositions && spotPositions.length > 0 && (
+          <div style={{
             overflowX: 'auto',
             maxHeight: '300px',
             overflowY: 'auto'
           }}>
-            <table style={{ 
-              width: '100%', 
+            <table style={{
+              width: '100%',
               borderCollapse: 'collapse',
               fontSize: '13px'
             }}>
               <thead>
-                <tr style={{ 
+                <tr style={{
                   backgroundColor: '#f8f9fa',
                   borderBottom: '2px solid #dee2e6'
                 }}>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'left', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'left',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Symbol</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Quantity</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Entry Price</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Market Value</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>P&L</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Return</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'center',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
@@ -342,10 +410,10 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
                 </tr>
               </thead>
               <tbody>
-                {tradingPositions.map((pos, index) => (
-                  <tr 
+                {spotPositions.map((pos, index) => (
+                  <tr
                     key={index}
-                    style={{ 
+                    style={{
                       borderBottom: '1px solid #dee2e6',
                       backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa'
                     }}
@@ -375,7 +443,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
                       </div>
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                      <div style={{ 
+                      <div style={{
                         color: pos.unrealizedPnL >= 0 ? '#28a745' : '#dc3545',
                         fontWeight: 'bold'
                       }}>
@@ -383,7 +451,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
                       </div>
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right' }}>
-                      <div style={{ 
+                      <div style={{
                         color: pos.totalReturn >= 0 ? '#28a745' : '#dc3545',
                         fontWeight: 'bold'
                       }}>
@@ -392,7 +460,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'center' }}>
                       <button
-                        onClick={() => handleClosePosition(pos.position.symbol, pos.position.quantity)}
+                        onClick={() => handleCloseSpotPosition(pos.position.symbol, pos.position.quantity)}
                         disabled={closingPositions.has(pos.position.symbol)}
                         style={{
                           padding: '4px 8px',
@@ -424,11 +492,203 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
             </table>
           </div>
         )}
+
+        {/* Futures Positions Table */}
+        {showFuturesPositions && futuresPositions.length > 0 && (
+          <div style={{
+            overflowX: 'auto',
+            maxHeight: '300px',
+            overflowY: 'auto'
+          }}>
+            <table style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              fontSize: '13px'
+            }}>
+              <thead>
+                <tr style={{
+                  backgroundColor: '#f8f9fa',
+                  borderBottom: '2px solid #dee2e6'
+                }}>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Position</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Size</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Entry Price</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Current Price</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>P&L</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>ROE</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Margin</th>
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#f8f9fa',
+                    zIndex: 1
+                  }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {futuresPositions.map((futuresPos, index) => {
+                  const positionKey = `${futuresPos.position.symbol}-${futuresPos.position.position_side}`;
+                  return (
+                    <tr
+                      key={futuresPos.position.id}
+                      style={{
+                        borderBottom: '1px solid #dee2e6',
+                        backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#e3f2fd';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = index % 2 === 0 ? '#ffffff' : '#f8f9fa';
+                      }}
+                    >
+                      <td style={{ padding: '10px 8px' }}>
+                        <div style={{ fontWeight: 'bold', color: futuresPos.position.position_side === 'long' ? '#28a745' : '#dc3545' }}>
+                          {futuresPos.position.position_side?.toUpperCase() || 'UNKNOWN'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#6c757d' }}>
+                          {futuresPos.position.symbol}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{ color: '#333' }}>
+                          {formatQuantity(Math.abs(futuresPos.position.size))}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{ color: '#333' }}>
+                          {formatCurrency(futuresPos.position.entry_price)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{ color: '#333' }}>
+                          {formatCurrency(futuresPos.currentPrice)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{
+                          color: futuresPos.unrealizedPnL >= 0 ? '#28a745' : '#dc3545',
+                          fontWeight: 'bold'
+                        }}>
+                          {futuresPos.unrealizedPnL >= 0 ? '+' : ''}{formatCurrency(futuresPos.unrealizedPnL)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{
+                          color: futuresPos.roe >= 0 ? '#28a745' : '#dc3545',
+                          fontWeight: 'bold'
+                        }}>
+                          {futuresPos.roe >= 0 ? '+' : ''}{futuresPos.roe.toFixed(2)}%
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'right' }}>
+                        <div style={{ color: '#333' }}>
+                          {formatCurrency(futuresPos.position.margin_amount)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                        <button
+                          onClick={() => handleCloseFuturesPosition(
+                            futuresPos.position.symbol,
+                            futuresPos.position.position_side,
+                            futuresPos.position.size
+                          )}
+                          disabled={closingPositions.has(positionKey)}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            backgroundColor: closingPositions.has(positionKey) ? '#6c757d' : '#dc3545',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: closingPositions.has(positionKey) ? 'not-allowed' : 'pointer',
+                            fontWeight: '500'
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!closingPositions.has(positionKey)) {
+                              e.currentTarget.style.backgroundColor = '#c82333';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!closingPositions.has(positionKey)) {
+                              e.currentTarget.style.backgroundColor = '#dc3545';
+                            }
+                          }}
+                        >
+                          {closingPositions.has(positionKey) ? 'Closing...' : 'Close'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Pending Orders Section */}
       <div>
-        <div style={{ 
+        <div style={{
           padding: '12px 16px',
           backgroundColor: '#f8f9fa',
           borderBottom: '1px solid #dee2e6',
@@ -438,11 +698,11 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
         }}>
           Pending Orders
         </div>
-        
+
         {pendingError && (
-          <div style={{ 
-            padding: '20px', 
-            textAlign: 'center', 
+          <div style={{
+            padding: '20px',
+            textAlign: 'center',
             color: '#dc3545',
             backgroundColor: '#f8d7da',
             border: '1px solid #f5c6cb',
@@ -452,84 +712,84 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
             {pendingError}
           </div>
         )}
-        
+
         {pendingLoading ? (
           <div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
             <div>Loading pending orders...</div>
           </div>
         ) : pendingOrders.length === 0 ? (
-          <div style={{ 
-            padding: '40px 20px', 
-            textAlign: 'center', 
+          <div style={{
+            padding: '40px 20px',
+            textAlign: 'center',
             color: '#666',
             fontStyle: 'italic'
           }}>
             No pending orders
           </div>
         ) : (
-          <div style={{ 
+          <div style={{
             overflowX: 'auto',
             maxHeight: '300px',
             overflowY: 'auto'
           }}>
-            <table style={{ 
-              width: '100%', 
+            <table style={{
+              width: '100%',
               borderCollapse: 'collapse',
               fontSize: '13px'
             }}>
               <thead>
-                <tr style={{ 
+                <tr style={{
                   backgroundColor: '#f8f9fa',
                   borderBottom: '2px solid #dee2e6'
                 }}>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'left', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'left',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Symbol</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'center',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Side</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Quantity</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'right', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'right',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Price</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'left', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'left',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
                     backgroundColor: '#f8f9fa',
                     zIndex: 1
                   }}>Placed</th>
-                  <th style={{ 
-                    padding: '10px 8px', 
-                    textAlign: 'center', 
+                  <th style={{
+                    padding: '10px 8px',
+                    textAlign: 'center',
                     fontWeight: 'bold',
                     position: 'sticky',
                     top: 0,
@@ -540,9 +800,9 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
               </thead>
               <tbody>
                 {pendingOrders.map((order, index) => (
-                  <tr 
+                  <tr
                     key={order.id}
-                    style={{ 
+                    style={{
                       borderBottom: '1px solid #dee2e6',
                       backgroundColor: index % 2 === 0 ? '#ffffff' : '#f8f9fa'
                     }}
@@ -562,11 +822,11 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
                         borderRadius: '12px',
                         fontSize: '11px',
                         fontWeight: 'bold',
-                        backgroundColor: order.side === 'buy' ? '#28a74520' : '#dc354520',
-                        color: order.side === 'buy' ? '#28a745' : '#dc3545',
+                        backgroundColor: order.side.includes('buy') || order.side.includes('long') ? '#28a74520' : '#dc354520',
+                        color: order.side.includes('buy') || order.side.includes('long') ? '#28a745' : '#dc3545',
                         textTransform: 'uppercase'
                       }}>
-                        {order.side}
+                        {order.side.replace('_', ' ')}
                       </span>
                     </td>
                     <td style={{ padding: '10px 8px', textAlign: 'right' }}>
@@ -619,7 +879,7 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
           </div>
         )}
       </div>
-      
+
       {/* Summary footer */}
       <div style={{
         padding: '12px 16px',
@@ -631,7 +891,9 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
         justifyContent: 'space-between',
         alignItems: 'center'
       }}>
-        <span>Positions: {tradingPositions.length} | Pending Orders: {pendingOrders.length}</span>
+        <span>
+          {showSpotPositions ? `Spot Positions: ${spotPositions.length}` : `Futures Positions: ${futuresPositions.length}`} | Pending Orders: {pendingOrders.length}
+        </span>
         <button
           onClick={refreshAll}
           disabled={positionsLoading || pendingLoading}
@@ -652,4 +914,4 @@ const TradingView: React.FC<TradingViewProps> = ({ onRefreshReady, isActive = tr
   );
 };
 
-export default TradingView;
+export default Positions;

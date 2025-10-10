@@ -9,6 +9,7 @@ interface Simulation {
   initial_funding: number;
   total_value: number | null;
   status: string;
+  mode: string;
   created_at: string;
   updated_at: string;
 }
@@ -176,9 +177,18 @@ const SimulationHistory: React.FC<SimulationHistoryProps> = ({ onLoadSimulation,
                 backgroundColor: '#f8f9fa',
                 zIndex: 1
               }}>Symbol</th>
-              <th style={{ 
-                padding: '10px 8px', 
-                textAlign: 'left', 
+              <th style={{
+                padding: '10px 8px',
+                textAlign: 'center',
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Mode</th>
+              <th style={{
+                padding: '10px 8px',
+                textAlign: 'left',
                 fontWeight: 'bold',
                 position: 'sticky',
                 top: 0,
@@ -262,6 +272,19 @@ const SimulationHistory: React.FC<SimulationHistoryProps> = ({ onLoadSimulation,
                 >
                   <td style={{ padding: '10px 8px' }}>
                     <div style={{ fontWeight: 'bold', color: '#333' }}>{simulation.symbol}</div>
+                  </td>
+                  <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                    <span style={{
+                      padding: '2px 6px',
+                      borderRadius: '8px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      backgroundColor: simulation.mode === 'future' ? '#ffc10720' : '#007bff20',
+                      color: simulation.mode === 'future' ? '#ffc107' : '#007bff',
+                      textTransform: 'uppercase'
+                    }}>
+                      {simulation.mode || 'spot'}
+                    </span>
                   </td>
                   <td style={{ padding: '10px 8px' }}>
                     <div style={{ color: '#666' }}>

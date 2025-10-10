@@ -36,8 +36,13 @@ interface WebSocketContextType {
   sendMessage: (message: any) => void;
   connect: () => void;
   disconnect: () => void;
+  // Trading mode and leverage state
+  tradingMode: 'spot' | 'future';
+  leverage: number;
+  setTradingMode: (mode: 'spot' | 'future') => void;
+  setLeverage: (leverage: number) => void;
   // Simulation control methods
-  startSimulation: (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => Promise<void>;
+  startSimulation: (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number, mode?: 'spot' | 'future') => Promise<void>;
   stopSimulation: () => Promise<void>;
   pauseSimulation: () => Promise<void>;
   resumeSimulation: (simulationId?: number, speed?: number, interval?: string) => Promise<void>;
@@ -47,7 +52,7 @@ interface WebSocketContextType {
   resetSimulationStatus: () => void;
   setHistoricalSimulationStatus: (status: SimulationStatus) => void;
   // Order methods
-  placeOrder: (symbol: string, side: 'buy' | 'sell', quantity: number, type?: 'market' | 'limit', limitPrice?: number) => Promise<void>;
+  placeOrder: (symbol: string, side: 'buy' | 'sell' | 'open_long' | 'open_short' | 'close_long' | 'close_short', quantity: number, type?: 'market' | 'limit', limitPrice?: number, leverage?: number) => Promise<void>;
   cancelOrder: (orderId: number) => Promise<void>;
 }
 
@@ -62,6 +67,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const [lastOrderNotification, setLastOrderNotification] = useState<OrderNotification | null>(null);
   const [currentSimulationStatus, setCurrentSimulationStatus] = useState<SimulationStatus | null>(null);
   const [floatingMessages, setFloatingMessages] = useState<MessageData[]>([]);
+
+  // Trading mode and leverage state
+  const [tradingMode, setTradingModeState] = useState<'spot' | 'future'>('spot');
+  const [leverage, setLeverageState] = useState<number>(10);
   
   // Removed unused request tracking variables for now
   
@@ -273,8 +282,17 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     });
   }, [sendMessage]);
 
+  // Trading mode and leverage setters
+  const setTradingMode = React.useCallback((mode: 'spot' | 'future') => {
+    setTradingModeState(mode);
+  }, []);
+
+  const setLeverage = React.useCallback((leverage: number) => {
+    setLeverageState(leverage);
+  }, []);
+
   // Simulation control methods - memoized to prevent useEffect loops
-  const startSimulation = React.useCallback(async (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number) => {
+  const startSimulation = React.useCallback(async (symbol: string, startTime: Date, interval: string, speed: number, initialFunding: number, mode?: 'spot' | 'future') => {
     // First establish websocket connection
     if ((connectionStateRef.current as ConnectionState) !== ConnectionState.CONNECTED) {
       console.log('Connecting to websocket before starting simulation...');
@@ -300,9 +318,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       startTime: startTime.getTime(),
       interval,
       speed,
-      initialFunding
+      initialFunding,
+      mode: mode || tradingMode
     });
-  }, [sendControlMessage, connect]);
+  }, [sendControlMessage, connect, tradingMode]);
 
   const stopSimulation = React.useCallback(async () => {
     return sendControlMessage('simulation_control_stop');
@@ -408,20 +427,26 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, []);
 
   // Order methods
-  const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell', quantity: number, type: 'market' | 'limit' = 'market', limitPrice?: number) => {
+  const placeOrder = React.useCallback(async (symbol: string, side: 'buy' | 'sell' | 'open_long' | 'open_short' | 'close_long' | 'close_short', quantity: number, type: 'market' | 'limit' = 'market', limitPrice?: number, orderLeverage?: number) => {
     const orderData: any = {
       symbol,
       side,
       type,
       quantity
     };
-    
+
     if (type === 'limit' && limitPrice !== undefined) {
       orderData.limit_price = limitPrice;
     }
-    
+
+    // Add leverage for futures orders
+    const isFuturesOrder = side === 'open_long' || side === 'open_short' || side === 'close_long' || side === 'close_short';
+    if (isFuturesOrder) {
+      orderData.leverage = orderLeverage || leverage;
+    }
+
     return sendControlMessage('order_place', orderData);
-  }, [sendControlMessage]);
+  }, [sendControlMessage, leverage]);
 
   const cancelOrder = React.useCallback(async (orderId: number) => {
     return sendControlMessage('order_cancel', { order_id: orderId });
@@ -439,6 +464,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     sendMessage,
     connect,
     disconnect,
+    tradingMode,
+    leverage,
+    setTradingMode,
+    setLeverage,
     startSimulation,
     stopSimulation,
     pauseSimulation,
