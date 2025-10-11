@@ -177,7 +177,7 @@ func (fe *FuturesEngine) ClosePosition(userID, simulationID uint, symbol string,
 	// Calculate margin to release
 	marginToRelease := position.MarginAmount * (size / position.Size)
 
-	if size == position.Size {
+	if size == position.Size || (position.Size-size) > -1e-8 && (position.Size-size) < 1e-8 {
 		// Close entire position
 		if err := tx.Delete(&position).Error; err != nil {
 			tx.Rollback()

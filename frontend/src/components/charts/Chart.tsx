@@ -707,7 +707,7 @@ const Chart: React.FC<ChartProps> = ({
         }
       }
     }
-  }, [simulationState?.lastCandle]); // Only trigger when lastCandle changes
+  }, [simulationState?.lastCandle, simulationState?.state]); // Only trigger when lastCandle changes
 
   // Handle simulation state changes (separate from candle processing)
   useEffect(() => {

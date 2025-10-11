@@ -22,7 +22,7 @@ interface SimulationState {
 
 function AppContent() {
   const [symbol, setSymbol] = useState('BTCUSDT');
-  const [timeframe, setTimeframe] = useState('1h');
+  const [timeframe, setTimeframe] = useState('5m');
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [initialFunding, setInitialFunding] = useState<number>(10000);
   const [simulationState, setSimulationState] = useState<SimulationState>({

@@ -146,7 +146,7 @@ func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulat
 		// Update existing position
 		newQuantity := position.Quantity + quantityChange
 
-		if newQuantity == 0 {
+		if newQuantity == 0 || (newQuantity > -1e-8 && newQuantity < 1e-8) {
 			// Position closed, delete it
 			return tx.Delete(&position).Error
 		} else if symbol == "USDT" {

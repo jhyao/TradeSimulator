@@ -79,5 +79,5 @@ export const formatQuantity = (value: number | null | undefined): string => {
     return '0.00';
   }
   
-  return formatNumber(value);
+  return formatNumber(value, 3, 3);
 };
