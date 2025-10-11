@@ -324,7 +324,7 @@ func (oe *OrderExecutionEngine) executeOrder(tx *gorm.DB, order *models.Order, p
 	}
 
 	// Update USDT position (cash)
-	if err := oe.positionDAO.UpdateOrCreatePosition(tx, order.UserID, order.SimulationID, "USDT", "USDT", netCashImpact, 1.0, 0); err != nil {
+	if err := oe.positionDAO.UpdateOrCreatePosition(tx, order.UserID, order.SimulationID, "USDT", "USDT", netCashImpact, 1.0); err != nil {
 		return nil, fmt.Errorf("failed to update USDT position: %w", err)
 	}
 
@@ -336,7 +336,7 @@ func (oe *OrderExecutionEngine) executeOrder(tx *gorm.DB, order *models.Order, p
 		positionQuantityChange = -order.Quantity
 	}
 
-	if err := oe.positionDAO.UpdateOrCreatePosition(tx, order.UserID, order.SimulationID, order.Symbol, order.BaseCurrency, positionQuantityChange, price, fee); err != nil {
+	if err := oe.positionDAO.UpdateOrCreatePosition(tx, order.UserID, order.SimulationID, order.Symbol, order.BaseCurrency, positionQuantityChange, price); err != nil {
 		return nil, fmt.Errorf("failed to update position: %w", err)
 	}
 
@@ -646,6 +646,11 @@ func (oe *OrderExecutionEngine) executeFuturesOrder(tx *gorm.DB, order *models.O
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute futures operation: %w", err)
+	}
+
+	// Deduct trading fee from user's USDT balance
+	if err := oe.futuresEngine.UpdatePositionMargin(tx, order.UserID, *order.SimulationID, -fee); err != nil {
+		return nil, fmt.Errorf("failed to deduct futures trading fee: %w", err)
 	}
 
 	// Update order status

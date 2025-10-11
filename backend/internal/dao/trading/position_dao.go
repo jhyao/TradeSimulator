@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"tradesimulator/internal/models"
+
 	"gorm.io/gorm"
 )
 
@@ -25,7 +26,7 @@ type PositionDAOInterface interface {
 	UpdateWithTx(tx *gorm.DB, position *models.Position) error
 	DeleteWithTx(tx *gorm.DB, position *models.Position) error
 	GetPositionWithTx(tx *gorm.DB, userID, simulationID uint, symbol, baseCurrency string) (*models.Position, error)
-	UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulationID *uint, symbol string, baseCurrency string, quantityChange, price, fee float64) error
+	UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulationID *uint, symbol string, baseCurrency string, quantityChange, price float64) error
 	CreateInitialUSDTPosition(userID uint, simulationID *uint, initialFunding float64) error
 }
 
@@ -123,7 +124,7 @@ func (dao *PositionDAO) GetPositionWithTx(tx *gorm.DB, userID, simulationID uint
 }
 
 // UpdateOrCreatePosition updates or creates a position within a transaction (extracted from order service)
-func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulationID *uint, symbol string, baseCurrency string, quantityChange, price, fee float64) error {
+func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulationID *uint, symbol string, baseCurrency string, quantityChange, price float64) error {
 	var position models.Position
 	err := tx.Where("user_id = ? AND symbol = ? AND base_currency = ? AND simulation_id = ?", userID, symbol, baseCurrency, simulationID).First(&position).Error
 
@@ -136,7 +137,7 @@ func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulat
 			BaseCurrency: baseCurrency,
 			Quantity:     quantityChange,
 			AveragePrice: price,
-			TotalCost:    (quantityChange * price) + fee,
+			TotalCost:    quantityChange * price,
 		}
 		return tx.Create(&position).Error
 	} else if err != nil {
@@ -154,7 +155,7 @@ func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulat
 			position.TotalCost = newQuantity // For USDT, total cost = quantity since price = 1
 		} else if (position.Quantity > 0 && quantityChange > 0) || (position.Quantity < 0 && quantityChange < 0) {
 			// Same direction, update average price
-			newTotalCost := position.TotalCost + (quantityChange * price) + fee
+			newTotalCost := position.TotalCost + (quantityChange * price)
 			newAveragePrice := newTotalCost / newQuantity
 
 			position.Quantity = newQuantity
@@ -164,7 +165,7 @@ func (dao *PositionDAO) UpdateOrCreatePosition(tx *gorm.DB, userID uint, simulat
 			// Opposite direction, just update quantity
 			position.Quantity = newQuantity
 			// Keep existing average price and update total cost proportionally
-			position.TotalCost = position.AveragePrice * newQuantity
+			position.TotalCost = position.AveragePrice*newQuantity
 		}
 
 		return tx.Save(&position).Error

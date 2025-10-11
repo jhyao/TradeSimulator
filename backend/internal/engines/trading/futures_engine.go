@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"log"
 
-	"tradesimulator/internal/models"
 	"tradesimulator/internal/dao/trading"
+	"tradesimulator/internal/models"
 
 	"gorm.io/gorm"
 )
@@ -253,5 +253,5 @@ func (fe *FuturesEngine) ValidateMarginRequirement(userID, simulationID uint, re
 // UpdatePositionMargin updates the user's margin balance (USDT position)
 func (fe *FuturesEngine) UpdatePositionMargin(tx *gorm.DB, userID, simulationID uint, marginDelta float64) error {
 	// Update USDT position with the margin delta
-	return fe.positionDAO.UpdateOrCreatePosition(tx, userID, &simulationID, "USDT", "USDT", marginDelta, 1.0, 0)
+	return fe.positionDAO.UpdateOrCreatePosition(tx, userID, &simulationID, "USDT", "USDT", marginDelta, 1.0)
 }

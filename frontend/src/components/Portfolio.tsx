@@ -40,9 +40,11 @@ const Portfolio: React.FC<PortfolioProps> = ({
     calculatedFuturesPositions.forEach(calcFuturesPos => {
       marginUsed += calcFuturesPos.position.margin_amount;
       futuresPnL += calcFuturesPos.unrealizedPnL;
+      // Add margin amount to total value (represents invested capital in futures)
+      totalValue += calcFuturesPos.position.margin_amount;
     });
 
-    // Total value includes futures P&L
+    // Add futures P&L to total value
     totalValue += futuresPnL;
     const totalPnL = totalValue - initialFunding;
 
