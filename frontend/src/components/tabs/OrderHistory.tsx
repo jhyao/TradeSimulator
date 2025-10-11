@@ -1,90 +1,26 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectionState } from '../../hooks/useWebSocket';
+import React, { useEffect, useRef } from 'react';
 import { formatCurrency, formatQuantity } from '../../utils/numberFormat';
-import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { usePositions } from '../../contexts/PositionsContext';
 
 interface OrderHistoryProps {
-  connectionState: ConnectionState;
-  simulationState: 'stopped' | 'playing' | 'paused';
   onRefreshReady?: (refreshFn: () => void) => void;
   isActive?: boolean;
 }
 
-interface Order {
-  id: number;
-  user_id: number;
-  symbol: string;
-  side: string;
-  type: string;
-  quantity: number;
-  status: string;
-  placed_at: string;
-  created_at: string;
-  order_params?: {
-    limit_price?: number;
-    stop_price?: number;
-    stop_limit_price?: number;
-    take_profit_price?: number;
-    stop_loss_price?: number;
-  };
-}
-
 const OrderHistory: React.FC<OrderHistoryProps> = ({
-  connectionState,
-  simulationState,
   onRefreshReady,
   isActive = true
 }) => {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
+  const {
+    orders,
+    ordersLoading: loading,
+    ordersError: error,
+    fetchOrders
+  } = usePositions();
 
   // Use ref to track isActive without making it a dependency
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
-
-  const fetchOrders = useCallback(async () => {
-    // If no simulation status available yet, wait
-    if (!currentSimulationStatus) {
-      return;
-    }
-    
-    // If simulation is running, use its ID
-    let simulationId = currentSimulationStatus.simulationID;
-    
-    // If no running simulation but we have a simulation ID from history, use it
-    if (!currentSimulationStatus.isRunning && !simulationId) {
-      setOrders([]);
-      setError('No simulation running. Start a simulation to see orders.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/v1/orders?limit=50&simulation_id=${simulationId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setOrders(data.orders || []);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to load orders: ${errorMessage}`);
-      console.error('Error fetching orders:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentSimulationStatus]);
 
   // Expose refresh function to parent
   useEffect(() => {
@@ -93,20 +29,6 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     }
   }, [onRefreshReady, fetchOrders]);
 
-  // Auto-refresh orders when order events occur (only when tab is active)
-  useEffect(() => {
-    if (isActiveRef.current && lastOrderNotification) {
-      const { type } = lastOrderNotification;
-
-      // Refresh order history for order placement and execution events
-      if (type === 'order_placed' || type === 'order_executed') {
-          // Small delay to ensure backend has processed the change
-          setTimeout(() => {
-            fetchOrders();
-          }, 500);
-        }
-      }
-  }, [lastOrderNotification, fetchOrders]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -141,7 +63,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     return date.toLocaleString();
   };
 
-  const getOrderPrice = (order: Order) => {
+  const getOrderPrice = (order: typeof orders[0]) => {
     if (order.type === 'market') {
       return '-';
     }

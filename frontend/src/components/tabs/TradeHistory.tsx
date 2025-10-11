@@ -1,83 +1,26 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectionState } from '../../hooks/useWebSocket';
+import React, { useEffect, useRef } from 'react';
 import { formatCurrency, formatQuantity } from '../../utils/numberFormat';
-import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { usePositions } from '../../contexts/PositionsContext';
 
 interface TradeHistoryProps {
-  connectionState: ConnectionState;
-  simulationState: 'stopped' | 'playing' | 'paused';
   onRefreshReady?: (refreshFn: () => void) => void;
   isActive?: boolean;
 }
 
-interface Trade {
-  id: number;
-  order_id: number;
-  user_id: number;
-  symbol: string;
-  side: string;
-  quantity: number;
-  price: number;
-  fee: number;
-  created_at: string;
-}
-
 const TradeHistory: React.FC<TradeHistoryProps> = ({
-  connectionState,
-  simulationState,
   onRefreshReady,
   isActive = true
 }) => {
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
+  const {
+    trades,
+    tradesLoading: loading,
+    tradesError: error,
+    fetchTrades
+  } = usePositions();
 
   // Use ref to track isActive without making it a dependency
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
-
-  const fetchTrades = useCallback(async () => {
-    // If no simulation status available yet, wait
-    if (!currentSimulationStatus) {
-      return;
-    }
-    
-    // If simulation is running, use its ID
-    let simulationId = currentSimulationStatus.simulationID;
-    
-    // If no running simulation but we have a simulation ID from history, use it
-    if (!currentSimulationStatus.isRunning && !simulationId) {
-      setTrades([]);
-      setError('No simulation running. Start a simulation to see trades.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/v1/trades?limit=50&simulation_id=${simulationId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setTrades(data.trades || []);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Failed to load trades: ${errorMessage}`);
-      console.error('Error fetching trades:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [currentSimulationStatus]);
 
   // Expose refresh function to parent
   useEffect(() => {
@@ -86,20 +29,6 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     }
   }, [onRefreshReady, fetchTrades]);
 
-  // Auto-refresh trades when order events occur that create trades (only when tab is active)
-  useEffect(() => {
-    if (isActiveRef.current && lastOrderNotification) {
-      const { type } = lastOrderNotification;
-
-      // Refresh trade history when orders are executed (which create trades)
-      if (type === 'order_executed') {
-          // Small delay to ensure backend has processed the change
-          setTimeout(() => {
-            fetchTrades();
-          }, 500);
-        }
-      }
-  }, [lastOrderNotification, fetchTrades]);
 
   const getSideColor = (side: string) => {
     switch (side.toLowerCase()) {

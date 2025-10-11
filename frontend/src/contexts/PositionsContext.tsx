@@ -44,16 +44,57 @@ export interface CalculatedFuturesPosition {
   roe: number; // Return on Equity
 }
 
+export interface Order {
+  id: number;
+  user_id: number;
+  symbol: string;
+  side: string;
+  type: string;
+  quantity: number;
+  status: string;
+  placed_at: string;
+  created_at: string;
+  order_params?: {
+    limit_price?: number;
+    stop_price?: number;
+    stop_limit_price?: number;
+    take_profit_price?: number;
+    stop_loss_price?: number;
+  };
+}
+
+export interface Trade {
+  id: number;
+  order_id: number;
+  user_id: number;
+  symbol: string;
+  side: string;
+  quantity: number;
+  price: number;
+  fee: number;
+  created_at: string;
+  executed_at?: string;
+}
+
 interface PositionsContextType {
   positions: Position[];
   calculatedPositions: CalculatedPosition[];
   futuresPositions: FuturesPosition[];
   calculatedFuturesPositions: CalculatedFuturesPosition[];
+  orders: Order[];
+  pendingOrders: Order[];
+  trades: Trade[];
   loading: boolean;
+  ordersLoading: boolean;
+  tradesLoading: boolean;
   error: string | null;
+  ordersError: string | null;
+  tradesError: string | null;
   lastRefresh: Date | null;
   fetchPositions: () => Promise<void>;
   fetchFuturesPositions: () => Promise<void>;
+  fetchOrders: () => Promise<void>;
+  fetchTrades: () => Promise<void>;
 }
 
 const PositionsContext = createContext<PositionsContextType | undefined>(undefined);
@@ -75,8 +116,14 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
 }) => {
   const [positions, setPositions] = useState<Position[]>([]);
   const [futuresPositions, setFuturesPositions] = useState<FuturesPosition[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [tradesLoading, setTradesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [tradesError, setTradesError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const { currentSimulationStatus, lastOrderNotification } = useWebSocketContext();
 
@@ -162,7 +209,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
 
   const fetchPositions = useCallback(async () => {
     // If no simulation status available yet, wait
-    if (!currentSimulationStatus) {
+    if (!currentSimulationStatus?.simulationID) {
       return;
     }
     
@@ -201,22 +248,17 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [currentSimulationStatus]);
+  }, [currentSimulationStatus?.simulationID]);
 
   const fetchFuturesPositions = useCallback(async () => {
     // If no simulation status available yet, wait
-    if (!currentSimulationStatus) {
+    if (!currentSimulationStatus?.simulationID) {
+      setFuturesPositions([]);
       return;
     }
 
     // If simulation is running, use its ID
     let simulationId = currentSimulationStatus.simulationID;
-
-    // If no running simulation but we have a simulation ID from history, use it
-    if (!currentSimulationStatus.isRunning && !simulationId) {
-      setFuturesPositions([]);
-      return;
-    }
 
     setLoading(true);
     setError(null);
@@ -239,53 +281,153 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [currentSimulationStatus]);
+  }, [currentSimulationStatus?.simulationID]);
 
-  // Auto-refresh positions data - SINGLE SOURCE OF TRUTH
-  useEffect(() => {
-    if (currentSimulationStatus?.state === 'playing') {
-      fetchPositions();
-      fetchFuturesPositions();
+  const fetchOrders = useCallback(async () => {
+    if (!currentSimulationStatus?.simulationID) {
+      setOrders([]);
+      setOrdersError('No simulation running. Start a simulation to see orders.');
+      return;
     }
 
+    let simulationId = currentSimulationStatus.simulationID;
+
+    setOrdersLoading(true);
+    setOrdersError(null);
+
+    try {
+      const response = await fetch(`/api/v1/orders?limit=100&simulation_id=${simulationId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setOrders(data.orders || []);
+      setLastRefresh(new Date());
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setOrdersError(`Failed to load orders: ${errorMessage}`);
+      console.error('Error fetching orders:', err);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, [currentSimulationStatus?.simulationID]);
+
+  const fetchTrades = useCallback(async () => {
+    if (!currentSimulationStatus?.simulationID) {
+      setTrades([]);
+      setTradesError('No simulation running. Start a simulation to see trades.');
+      return;
+    }
+
+    let simulationId = currentSimulationStatus.simulationID;
+
+    setTradesLoading(true);
+    setTradesError(null);
+
+    try {
+      const response = await fetch(`/api/v1/trades?limit=100&simulation_id=${simulationId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setTrades(data.trades || []);
+      setLastRefresh(new Date());
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setTradesError(`Failed to load trades: ${errorMessage}`);
+      console.error('Error fetching trades:', err);
+    } finally {
+      setTradesLoading(false);
+    }
+  }, [currentSimulationStatus?.simulationID]);
+
+  // Initial fetch when simulation ID changes
+  useEffect(() => {
+      fetchPositions();
+      fetchFuturesPositions();
+      fetchOrders();
+      fetchTrades();
+  }, [currentSimulationStatus?.simulationID, fetchPositions, fetchFuturesPositions, fetchOrders, fetchTrades]);
+
+  // Auto-refresh all data - SINGLE SOURCE OF TRUTH
+  useEffect(() => {
     const interval = currentSimulationStatus?.state === 'playing'
       ? setInterval(() => {
           fetchPositions();
           fetchFuturesPositions();
-        }, 30000)
+          fetchOrders();
+          fetchTrades();
+        }, 10000)
       : null;
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [currentSimulationStatus, fetchPositions, fetchFuturesPositions]);
+  }, [currentSimulationStatus, fetchPositions, fetchFuturesPositions, fetchOrders, fetchTrades]);
 
-  // Refresh positions when order is executed
+  // Refresh data when order events occur
   useEffect(() => {
-    if (lastOrderNotification?.type === 'order_executed') {
-      console.log('PositionsContext: Order executed, refreshing positions after delay');
-      // Add small delay to ensure backend has processed the order execution
-      setTimeout(() => {
-        console.log('PositionsContext: Executing position refresh for order_executed');
-        fetchPositions();
-        fetchFuturesPositions();
-      }, 800); // Slightly longer delay than pending orders to ensure proper sequencing
+    if (lastOrderNotification) {
+      const { type } = lastOrderNotification;
+
+      if (type === 'order_executed') {
+        console.log('PositionsContext: Order executed, refreshing all data after delay');
+        setTimeout(() => {
+          console.log('PositionsContext: Executing refresh for order_executed');
+          fetchPositions();
+          fetchFuturesPositions();
+          fetchOrders();
+          fetchTrades();
+        }, 500);
+      } else if (type === 'order_placed' || type === 'order_cancelled') {
+        console.log(`PositionsContext: ${type}, refreshing orders after delay`);
+        setTimeout(() => {
+          console.log(`PositionsContext: Executing orders refresh for ${type}`);
+          fetchOrders();
+        }, 500);
+      }
     }
-  }, [lastOrderNotification, fetchPositions, fetchFuturesPositions]);
+  }, [lastOrderNotification, fetchPositions, fetchFuturesPositions, fetchOrders, fetchTrades]);
 
   const calculatedPositions = calculatePositions(positions, currentPrice, symbol);
   const calculatedFuturesPositions = calculateFuturesPositions(futuresPositions, currentPrice);
+
+  // Filter pending orders from all orders
+  const pendingOrders = orders.filter(order => order.status === 'pending');
 
   const value: PositionsContextType = {
     positions,
     calculatedPositions,
     futuresPositions,
     calculatedFuturesPositions,
+    orders,
+    pendingOrders,
+    trades,
     loading,
+    ordersLoading,
+    tradesLoading,
     error,
+    ordersError,
+    tradesError,
     lastRefresh,
     fetchPositions,
     fetchFuturesPositions,
+    fetchOrders,
+    fetchTrades,
   };
 
   return (

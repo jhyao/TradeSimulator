@@ -39,19 +39,19 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
     setTimeout(() => {
       switch (tabId) {
         case 'positions':
-          if (positionsRefreshRef.current) {
-            positionsRefreshRef.current();
-          }
+          // if (positionsRefreshRef.current) {
+          //   positionsRefreshRef.current();
+          // }
           break;
         case 'orders':
-          if (ordersRefreshRef.current) {
-            ordersRefreshRef.current();
-          }
+          // if (ordersRefreshRef.current) {
+          //   ordersRefreshRef.current();
+          // }
           break;
         case 'trades':
-          if (tradesRefreshRef.current) {
-            tradesRefreshRef.current();
-          }
+          // if (tradesRefreshRef.current) {
+          //   tradesRefreshRef.current();
+          // }
           break;
         case 'history':
           if (historyRefreshRef.current) {
@@ -81,16 +81,12 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
         </div>
         <div style={{ display: activeTab === 'orders' ? 'block' : 'none', height: '100%' }}>
           <OrderHistory
-            connectionState={connectionState}
-            simulationState={simulationState}
             onRefreshReady={(refreshFn) => ordersRefreshRef.current = refreshFn}
             isActive={activeTab === 'orders'}
           />
         </div>
         <div style={{ display: activeTab === 'trades' ? 'block' : 'none', height: '100%' }}>
           <TradeHistory
-            connectionState={connectionState}
-            simulationState={simulationState}
             onRefreshReady={(refreshFn) => tradesRefreshRef.current = refreshFn}
             isActive={activeTab === 'trades'}
           />

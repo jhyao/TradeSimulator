@@ -4,6 +4,7 @@ import { MarketApiService } from '../../services/marketApi';
 import { CandleAggregator } from '../../utils/CandleAggregator';
 import { formatPrice, formatPercentage } from '../../utils/numberFormat';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { usePositions } from '../../contexts/PositionsContext';
 import TimeframeSelector from './TimeframeSelector';
 
 // OHLCV interface moved to CandleAggregator
@@ -63,6 +64,7 @@ const Chart: React.FC<ChartProps> = ({
   currentSimulationId,
   onTimeframeChange
 }) => {
+  const { trades } = usePositions();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,59 +108,44 @@ const Chart: React.FC<ChartProps> = ({
     return null;
   }, [symbol]);
 
-  const fetchTrades = useCallback(async () => {
-    if (!currentSimulationId) {
+  const processTradesIntoMarkers = useCallback((tradesData: any[]) => {
+    if (!tradesData || tradesData.length === 0) {
       return [];
     }
 
     try {
-      const response = await fetch(`/api/v1/trades?simulation_id=${currentSimulationId}&limit=1000`);
-      if (response.ok) {
-        const data = await response.json();
-        const trades = data.trades || [];
-        
-        // Filter trades for current symbol
-        const symbolTrades = trades.filter((trade: any) => trade.symbol === symbol);
-        
-        // Helper function to get trade side color and position
-        const getTradeVisuals = (side: string) => {
-          const sideNormalized = side.toLowerCase();
-          const isGreenSide = ['buy', 'open_long', 'close_short'].includes(sideNormalized);
-          return {
-            color: isGreenSide ? '#28a745' : '#dc3545',
-            position: isGreenSide ? 'belowBar' as const : 'aboveBar' as const,
-            shape: isGreenSide ? 'arrowUp' as const : 'arrowDown' as const
-          };
+      // Filter trades for current symbol
+      const symbolTrades = tradesData.filter((trade: any) => trade.symbol === symbol);
+
+      // Helper function to get trade side color and position
+      const getTradeVisuals = (side: string) => {
+        const sideNormalized = side.toLowerCase();
+        const isGreenSide = ['buy', 'open_long', 'close_short'].includes(sideNormalized);
+        return {
+          color: isGreenSide ? '#28a745' : '#dc3545',
+          position: isGreenSide ? 'belowBar' as const : 'aboveBar' as const,
+          shape: isGreenSide ? 'arrowUp' as const : 'arrowDown' as const
         };
+      };
 
-        // Create markers for all trades
-        const markers = symbolTrades.map((trade: any) => {
-          const visuals = getTradeVisuals(trade.side);
-          return {
-            time: Math.floor(trade.executed_at / 1000) as any,
-            position: visuals.position,
-            color: visuals.color,
-            shape: visuals.shape,
-            text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
-          };
-        });
+      // Create markers for all trades
+      const markers = symbolTrades.map((trade: any) => {
+        const visuals = getTradeVisuals(trade.side);
+        return {
+          time: Math.floor(trade.executed_at / 1000) as any,
+          position: visuals.position,
+          color: visuals.color,
+          shape: visuals.shape,
+          text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
+        };
+      });
 
-        return markers;
-      }
+      return markers;
     } catch (err) {
-      console.warn('Failed to fetch trades:', err);
+      console.warn('Failed to process trades:', err);
     }
     return [];
-  }, [currentSimulationId, symbol]);
-
-  const refreshTradeMarkers = useCallback(async () => {
-    if (!seriesMarkersRef.current) {
-      return;
-    }
-
-    const markers = await fetchTrades();
-    seriesMarkersRef.current.setMarkers(markers);
-  }, [fetchTrades]);
+  }, [symbol]);
 
   const fetchData = useCallback(async (endTime?: number, limit: number = 100, enableIncomplete: boolean = false) => {
     const response_data = await MarketApiService.getHistoricalData(
@@ -226,10 +213,10 @@ const Chart: React.FC<ChartProps> = ({
       }
 
       // Load and set trade markers
-      const markers = await fetchTrades();
-      if (seriesMarkersRef.current && markers.length > 0) {
-        seriesMarkersRef.current.setMarkers(markers);
-      }
+      // const markers = processTradesIntoMarkers(trades);
+      // if (seriesMarkersRef.current && markers.length > 0) {
+      //   seriesMarkersRef.current.setMarkers(markers);
+      // }
       if (rawData.length > 0) {
         displayedRangeStart.current = Math.floor(rawData[0].startTime / 1000);
         console.log('Displayed range start:', displayedRangeStart.current);
@@ -246,7 +233,7 @@ const Chart: React.FC<ChartProps> = ({
       setIsLoading(false);
       isInitialLoadComplete.current = true;
     }
-  }, [fetchData, selectedStartTime, fetchEarliestTime, fetchTrades]);
+  }, [fetchData, selectedStartTime, fetchEarliestTime]);
 
   const loadMoreData = useCallback(async () => {
     // Prevent loading if:
@@ -633,25 +620,15 @@ const Chart: React.FC<ChartProps> = ({
     }
   }, [isLoading]);
 
-  // Get WebSocket context for order notifications
-  const { lastOrderNotification } = useWebSocketContext();
-
-  // Refresh markers when new orders are executed
+  // Refresh markers when trades from context change
+  // And also when symbol or timeframe changes to ensure correct markers
   useEffect(() => {
-    if (lastOrderNotification &&
-        lastOrderNotification.type === 'order_executed' &&
-        candlestickSeriesRef.current) {
-
-      console.log('Chart: Order executed, refreshing trade markers after delay');
-      // Delay to ensure the trade is persisted in the database and positions are updated
-      const refreshTimeout = setTimeout(() => {
-        console.log('Chart: Executing trade marker refresh for order_executed');
-        refreshTradeMarkers();
-      }, 1000); // Longer delay to ensure proper sequencing after position updates
-
-      return () => clearTimeout(refreshTimeout);
+    if (candlestickSeriesRef.current && seriesMarkersRef.current) {
+      console.log('Chart: Trades changed, refreshing trade markers');
+      const markers = processTradesIntoMarkers(trades);
+      seriesMarkersRef.current.setMarkers(markers);
     }
-  }, [lastOrderNotification, refreshTradeMarkers]);
+  }, [symbol, timeframe, trades, processTradesIntoMarkers]);
 
   if (error) {
     return (

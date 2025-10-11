@@ -8,100 +8,38 @@ interface PositionsProps {
   isActive?: boolean;
 }
 
-interface PendingOrder {
-  id: number;
-  user_id: number;
-  symbol: string;
-  side: string;
-  type: string;
-  quantity: number;
-  status: string;
-  placed_at: string;
-  created_at: string;
-  order_params?: {
-    limit_price?: number;
-    stop_price?: number;
-    stop_limit_price?: number;
-    take_profit_price?: number;
-    stop_loss_price?: number;
-  };
-}
-
 const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }) => {
   const {
     calculatedPositions,
     calculatedFuturesPositions,
+    pendingOrders,
     loading: positionsLoading,
+    ordersLoading: pendingLoading,
     error: positionsError,
+    ordersError: pendingError,
     fetchPositions,
-    fetchFuturesPositions
+    fetchFuturesPositions,
+    fetchOrders
   } = usePositions();
   const {
     placeOrder,
     cancelOrder,
-    currentSimulationStatus,
     addFloatingMessage,
-    lastOrderNotification,
     tradingMode
   } = useWebSocketContext();
   const [closingPositions, setClosingPositions] = useState<Set<string>>(new Set());
-
-  // Pending orders state
-  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
-  const [pendingLoading, setPendingLoading] = useState(false);
-  const [pendingError, setPendingError] = useState<string | null>(null);
   const [cancellingOrders, setCancellingOrders] = useState<Set<number>>(new Set());
 
   // Use ref to track isActive without making it a dependency
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
-  const fetchPendingOrders = useCallback(async () => {
-    if (!currentSimulationStatus) {
-      return;
-    }
-
-    let simulationId = currentSimulationStatus.simulationID;
-
-    if (!currentSimulationStatus.isRunning && !simulationId) {
-      setPendingOrders([]);
-      return;
-    }
-
-    setPendingLoading(true);
-    setPendingError(null);
-
-    try {
-      const url = simulationId
-        ? `/api/v1/orders?simulation_id=${simulationId}&status=pending&limit=100`
-        : '/api/v1/orders?status=pending&limit=100';
-
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch pending orders: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        setPendingOrders(data.orders || []);
-      } else {
-        throw new Error(data.error || 'Failed to fetch pending orders');
-      }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error occurred';
-      setPendingError(errorMsg);
-      console.error('Error fetching pending orders:', err);
-    } finally {
-      setPendingLoading(false);
-    }
-  }, [currentSimulationStatus]);
-
   // Combined refresh function
   const refreshAll = useCallback(() => {
     fetchPositions();
     fetchFuturesPositions();
-    fetchPendingOrders();
-  }, [fetchPositions, fetchFuturesPositions, fetchPendingOrders]);
+    fetchOrders();
+  }, [fetchPositions, fetchFuturesPositions, fetchOrders]);
 
   // Expose refresh function to parent
   useEffect(() => {
@@ -110,23 +48,6 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
     }
   }, [onRefreshReady, refreshAll]);
 
-  // Auto-refresh pending orders when order events occur (only when tab is active)
-  useEffect(() => {
-    if (isActiveRef.current && lastOrderNotification) {
-      const { type } = lastOrderNotification;
-
-      // Refresh pending orders for order placement, cancellation, and execution events
-      if (type === 'order_placed' || type === 'order_cancelled' || type === 'order_executed') {
-        console.log(`Positions: ${type} received, refreshing pending orders after delay`);
-          // Small delay to ensure backend has processed the change
-        setTimeout(() => {
-          console.log(`Positions: Executing pending orders refresh for ${type}`);
-          fetchPendingOrders();
-          // Note: positions refresh is handled by PositionsContext, no need to duplicate here
-        }, 500);
-      }
-    }
-  }, [lastOrderNotification, fetchPendingOrders]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
@@ -223,7 +144,7 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
     }
   };
 
-  const getOrderPrice = (order: PendingOrder) => {
+  const getOrderPrice = (order: typeof pendingOrders[0]) => {
     if (order.type === 'market') {
       return '-';
     }
