@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { usePositions } from '../contexts/PositionsContext';
-import { useWebSocketContext } from '../contexts/WebSocketContext';
-import { formatCurrency, formatPercentage, formatQuantity } from '../utils/numberFormat';
+import { usePositions } from '../../contexts/PositionsContext';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { formatCurrency, formatPercentage, formatQuantity } from '../../utils/numberFormat';
 
 interface PositionsProps {
   onRefreshReady?: (refreshFn: () => void) => void;
@@ -117,18 +117,16 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
 
       // Refresh pending orders for order placement, cancellation, and execution events
       if (type === 'order_placed' || type === 'order_cancelled' || type === 'order_executed') {
+        console.log(`Positions: ${type} received, refreshing pending orders after delay`);
           // Small delay to ensure backend has processed the change
         setTimeout(() => {
+          console.log(`Positions: Executing pending orders refresh for ${type}`);
           fetchPendingOrders();
-          // Also refresh positions in case of executed orders
-          if (type === 'order_executed') {
-            fetchPositions();
-            fetchFuturesPositions();
-          }
+          // Note: positions refresh is handled by PositionsContext, no need to duplicate here
         }, 500);
       }
     }
-  }, [lastOrderNotification, fetchPendingOrders, fetchPositions, fetchFuturesPositions]);
+  }, [lastOrderNotification, fetchPendingOrders]);
 
   const formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${formatPercentage(value).replace('%', '')}%`;
@@ -331,7 +329,7 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
         {showSpotPositions && spotPositions.length > 0 && (
           <div style={{
             overflowX: 'auto',
-            maxHeight: '300px',
+            maxHeight: '200px',
             overflowY: 'auto'
           }}>
             <table style={{
@@ -497,7 +495,7 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
         {showFuturesPositions && futuresPositions.length > 0 && (
           <div style={{
             overflowX: 'auto',
-            maxHeight: '300px',
+            maxHeight: '200px',
             overflowY: 'auto'
           }}>
             <table style={{
@@ -729,7 +727,7 @@ const Positions: React.FC<PositionsProps> = ({ onRefreshReady, isActive = true }
         ) : (
           <div style={{
             overflowX: 'auto',
-            maxHeight: '300px',
+            maxHeight: '200px',
             overflowY: 'auto'
           }}>
             <table style={{

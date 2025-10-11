@@ -1,13 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import Chart from './components/Chart';
-import StartTimeSelector from './components/StartTimeSelector';
-import SimulationControls from './components/SimulationControls';
-import SymbolSelector from './components/SymbolSelector';
-import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/TimeframeSelector';
+import Chart from './components/charts/Chart';
+import ControlPanels from './components/controls/ControlPanels';
+import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/charts/TimeframeSelector';
 import OrderPanel from './components/OrderPanel';
 import Portfolio from './components/Portfolio';
-import TradingTabs from './components/TradingTabs';
-import TradingModePanel from './components/TradingModePanel';
+import TradingTabs from './components/tabs/TradingTabs';
 import FloatingMessage from './components/FloatingMessage';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { PositionsProvider } from './contexts/PositionsContext';
@@ -361,156 +358,28 @@ function AppContent() {
           Trade Simulator
         </h1>
         
-        {/* 6-Block Control Panel */}
-        <div style={{
-          display: 'flex',
-          height: '120px',
-          backgroundColor: '#f8f9fa',
-          border: '1px solid #dee2e6',
-          borderRadius: '8px',
-          marginBottom: '20px',
-          overflow: 'hidden',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-        }}>
-          {/* Block 1: Symbol + Latest Price */}
-          <div style={{
-            flex: '1',
-            padding: '15px',
-            borderRight: '1px solid #dee2e6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <SymbolSelector
-              symbol={symbol}
-              onSymbolChange={setSymbol}
-              disabled={simulationState.state !== 'stopped'}
-            />
-          </div>
-
-          {/* Block 2: Start Time Picker */}
-          <div style={{
-            flex: '1.2',
-            padding: '15px',
-            borderRight: '1px solid #dee2e6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <StartTimeSelector
-              onStartTimeSelected={handleStartTimeSelected}
-              selectedStartTime={selectedStartTime}
-              symbol={symbol}
-              compact={true}
-              disabled={simulationState.state !== 'stopped'}
-              currentSimulationTime={simulationState.simulationTime}
-            />
-          </div>
-
-          {/* Block 3: Initial Funding */}
-          <div style={{
-            flex: '1',
-            padding: '15px',
-            borderRight: '1px solid #dee2e6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <div>
-              <label style={{
-                fontSize: '12px',
-                color: '#666',
-                display: 'block',
-                marginBottom: '4px'
-              }}>
-                Initial Funding ($)
-              </label>
-              <input
-                type="number"
-                min="1000"
-                max="1000000"
-                step="1000"
-                value={initialFunding}
-                onChange={(e) => setInitialFunding(Math.max(1000, parseInt(e.target.value) || 1000))}
-                disabled={simulationState.state !== 'stopped'}
-                style={{
-                  width: '100%',
-                  padding: '6px 8px',
-                  fontSize: '14px',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  backgroundColor: simulationState.state !== 'stopped' ? '#f5f5f5' : 'white'
-                }}
-                placeholder="10000"
-              />
-            </div>
-          </div>
-
-          {/* Block 4: Speed Controls */}
-          <div style={{
-            flex: '1.5',
-            padding: '15px',
-            borderRight: '1px solid #dee2e6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <SimulationControls
-              selectedStartTime={selectedStartTime}
-              onStartSimulation={handleStartSimulation}
-              onPauseSimulation={handlePauseSimulation}
-              onResumeSimulation={handleResumeSimulation}
-              onStopSimulation={handleStopSimulation}
-              onSpeedChange={handleSpeedChange}
-              simulationState={simulationState.state}
-              currentSpeed={simulationState.speed}
-              symbol={symbol}
-              blockType="speed"
-              canResume={canResume()}
-            />
-          </div>
-
-          {/* Block 5: Trading Mode */}
-          <div style={{
-            flex: '1',
-            padding: '15px',
-            borderRight: '1px solid #dee2e6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <TradingModePanel
-              tradingMode={tradingMode}
-              leverage={leverage}
-              onTradingModeChange={setTradingMode}
-              onLeverageChange={setLeverage}
-              disabled={simulationState.state !== 'stopped'}
-            />
-          </div>
-
-          {/* Block 6: Start/Stop Controls */}
-          <div style={{
-            flex: '1',
-            padding: '15px',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
-            <SimulationControls
-              selectedStartTime={selectedStartTime}
-              onStartSimulation={handleStartSimulation}
-              onPauseSimulation={handlePauseSimulation}
-              onResumeSimulation={handleResumeSimulation}
-              onStopSimulation={handleStopSimulation}
-              onSpeedChange={handleSpeedChange}
-              simulationState={simulationState.state}
-              currentSpeed={simulationState.speed}
-              symbol={symbol}
-              blockType="controls"
-              canResume={canResume()}
-            />
-          </div>
-        </div>
+        {/* Control Panel */}
+        <ControlPanels
+          symbol={symbol}
+          onSymbolChange={setSymbol}
+          selectedStartTime={selectedStartTime}
+          onStartTimeSelected={handleStartTimeSelected}
+          currentSimulationTime={simulationState.simulationTime}
+          initialFunding={initialFunding}
+          onInitialFundingChange={setInitialFunding}
+          currentSpeed={simulationState.speed}
+          onSpeedChange={handleSpeedChange}
+          tradingMode={tradingMode}
+          leverage={leverage}
+          onTradingModeChange={setTradingMode}
+          onLeverageChange={setLeverage}
+          onStartSimulation={handleStartSimulation}
+          onPauseSimulation={handlePauseSimulation}
+          onResumeSimulation={handleResumeSimulation}
+          onStopSimulation={handleStopSimulation}
+          canResume={canResume()}
+          simulationState={simulationState.state}
+        />
         
         {/* Main Content Area - Chart and Trading */}
         <PositionsProvider
@@ -532,32 +401,13 @@ function AppContent() {
               boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
               overflow: 'hidden'
             }}>
-              {/* Timeframe Selector at top of chart */}
-              <div style={{
-                padding: '10px 15px',
-                backgroundColor: '#f8f9fa',
-                borderBottom: '1px solid #dee2e6',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}>
-                <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
-                  Price Chart - {symbol}
-                </h3>
-                <TimeframeSelector
-                  timeframe={timeframe}
-                  onTimeframeChange={handleTimeframeChange}
-                  compact={false}
-                  currentSpeed={simulationState.speed}
-                />
-              </div>
-              
-              <Chart 
-                symbol={symbol} 
+              <Chart
+                symbol={symbol}
                 timeframe={timeframe}
                 selectedStartTime={selectedStartTime}
                 simulationState={simulationState}
                 currentSimulationId={currentSimulationStatus?.simulationID || null}
+                onTimeframeChange={handleTimeframeChange}
               />
             </div>
 

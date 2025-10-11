@@ -263,8 +263,13 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   // Refresh positions when order is executed
   useEffect(() => {
     if (lastOrderNotification?.type === 'order_executed') {
-      fetchPositions();
-      fetchFuturesPositions();
+      console.log('PositionsContext: Order executed, refreshing positions after delay');
+      // Add small delay to ensure backend has processed the order execution
+      setTimeout(() => {
+        console.log('PositionsContext: Executing position refresh for order_executed');
+        fetchPositions();
+        fetchFuturesPositions();
+      }, 800); // Slightly longer delay than pending orders to ensure proper sequencing
     }
   }, [lastOrderNotification, fetchPositions, fetchFuturesPositions]);
 

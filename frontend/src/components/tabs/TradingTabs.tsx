@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ConnectionState } from '../hooks/useWebSocket';
+import { ConnectionState } from '../../hooks/useWebSocket';
 import Positions from './Positions';
 import OrderHistory from './OrderHistory';
 import TradeHistory from './TradeHistory';
@@ -73,13 +73,13 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
   const renderTabContent = () => {
     return (
       <>
-        <div style={{ display: activeTab === 'positions' ? 'block' : 'none' }}>
+        <div style={{ display: activeTab === 'positions' ? 'block' : 'none', height: '100%' }}>
           <Positions
             onRefreshReady={(refreshFn) => positionsRefreshRef.current = refreshFn}
             isActive={activeTab === 'positions'}
           />
         </div>
-        <div style={{ display: activeTab === 'orders' ? 'block' : 'none' }}>
+        <div style={{ display: activeTab === 'orders' ? 'block' : 'none', height: '100%' }}>
           <OrderHistory
             connectionState={connectionState}
             simulationState={simulationState}
@@ -87,7 +87,7 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
             isActive={activeTab === 'orders'}
           />
         </div>
-        <div style={{ display: activeTab === 'trades' ? 'block' : 'none' }}>
+        <div style={{ display: activeTab === 'trades' ? 'block' : 'none', height: '100%' }}>
           <TradeHistory
             connectionState={connectionState}
             simulationState={simulationState}
@@ -95,8 +95,8 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
             isActive={activeTab === 'trades'}
           />
         </div>
-        <div style={{ display: activeTab === 'history' ? 'block' : 'none' }}>
-          <SimulationHistory 
+        <div style={{ display: activeTab === 'history' ? 'block' : 'none', height: '100%' }}>
+          <SimulationHistory
             onLoadSimulation={onLoadFromHistory}
             onRefreshReady={(refreshFn) => historyRefreshRef.current = refreshFn}
           />
@@ -152,7 +152,10 @@ const TradingTabs: React.FC<TradingTabsProps> = ({
       </div>
 
       {/* Tab Content */}
-      <div>
+      <div style={{
+        height: '500px',
+        overflow: 'auto'
+      }}>
         {renderTabContent()}
       </div>
     </div>

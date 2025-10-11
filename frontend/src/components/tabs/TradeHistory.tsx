@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectionState } from '../hooks/useWebSocket';
-import { formatCurrency, formatQuantity } from '../utils/numberFormat';
-import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { ConnectionState } from '../../hooks/useWebSocket';
+import { formatCurrency, formatQuantity } from '../../utils/numberFormat';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
 interface TradeHistoryProps {
   connectionState: ConnectionState;
@@ -184,7 +184,7 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
     <div style={{ padding: '0' }}>
       <div style={{ 
         overflowX: 'auto',
-        maxHeight: '400px',
+        maxHeight: '450px',
         overflowY: 'auto'
       }}>
         <table style={{ 

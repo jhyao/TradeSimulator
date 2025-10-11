@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectionState } from '../hooks/useWebSocket';
-import { formatCurrency, formatQuantity } from '../utils/numberFormat';
-import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { ConnectionState } from '../../hooks/useWebSocket';
+import { formatCurrency, formatQuantity } from '../../utils/numberFormat';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
 interface OrderHistoryProps {
   connectionState: ConnectionState;
@@ -210,7 +210,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
     <div style={{ padding: '0' }}>
       <div style={{ 
         overflowX: 'auto',
-        maxHeight: '400px',
+        maxHeight: '450px',
         overflowY: 'auto'
       }}>
         <table style={{ 
@@ -250,9 +250,18 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
                 backgroundColor: '#f8f9fa',
                 zIndex: 1
               }}>Side</th>
-              <th style={{ 
-                padding: '10px 8px', 
-                textAlign: 'right', 
+              <th style={{
+                padding: '10px 8px',
+                textAlign: 'center',
+                fontWeight: 'bold',
+                position: 'sticky',
+                top: 0,
+                backgroundColor: '#f8f9fa',
+                zIndex: 1
+              }}>Type</th>
+              <th style={{
+                padding: '10px 8px',
+                textAlign: 'right',
                 fontWeight: 'bold',
                 position: 'sticky',
                 top: 0,
@@ -313,6 +322,19 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
                     textTransform: 'uppercase'
                   }}>
                     {order.side}
+                  </span>
+                </td>
+                <td style={{ padding: '10px 8px', textAlign: 'center' }}>
+                  <span style={{
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
+                    fontWeight: 'bold',
+                    backgroundColor: '#f8f9fa',
+                    color: '#333',
+                    textTransform: 'uppercase'
+                  }}>
+                    {order.type}
                   </span>
                 </td>
                 <td style={{ padding: '10px 8px', textAlign: 'right' }}>

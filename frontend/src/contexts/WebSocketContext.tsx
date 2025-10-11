@@ -150,6 +150,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           const executedOrder = lastMessage.data.order;
           const executedTrade = lastMessage.data.trade;
           const executedOrderMsg = `${executedOrder?.side?.toUpperCase() || 'ORDER'} executed: ${executedOrder?.quantity || executedTrade?.quantity || '?'} ${executedOrder?.symbol || executedTrade?.symbol || ''} at $${executedTrade?.price || executedOrder?.order_params?.limit_price || '?'}`;
+          console.log('Order executed received:', { order: executedOrder, trade: executedTrade });
           setLastOrderNotification({
             type: 'order_executed',
             order: executedOrder,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { formatCurrency } from '../utils/numberFormat';
+import { formatCurrency } from '../../utils/numberFormat';
 
 interface Simulation {
   id: number;
@@ -155,7 +155,7 @@ const SimulationHistory: React.FC<SimulationHistoryProps> = ({ onLoadSimulation,
     <div style={{ padding: '0' }}>
       <div style={{ 
         overflowX: 'auto',
-        maxHeight: '400px',
+        maxHeight: '450px',
         overflowY: 'auto'
       }}>
         <table style={{ 

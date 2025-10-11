@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle, createSeriesMarkers } from 'lightweight-charts';
-import { MarketApiService } from '../services/marketApi';
-import { CandleAggregator } from '../utils/CandleAggregator';
-import { formatPrice, formatPercentage } from '../utils/numberFormat';
-import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { MarketApiService } from '../../services/marketApi';
+import { CandleAggregator } from '../../utils/CandleAggregator';
+import { formatPrice, formatPercentage } from '../../utils/numberFormat';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import TimeframeSelector from './TimeframeSelector';
 
 // OHLCV interface moved to CandleAggregator
 
@@ -32,6 +33,7 @@ interface ChartProps {
   selectedStartTime?: Date | null;
   simulationState?: SimulationState;
   currentSimulationId?: number | null;
+  onTimeframeChange: (timeframe: string) => void;
 }
 
 const color_palette = {
@@ -53,12 +55,13 @@ const price_chart_styles = {
 };
 
 
-const Chart: React.FC<ChartProps> = ({ 
-  symbol, 
-  timeframe, 
-  selectedStartTime, 
+const Chart: React.FC<ChartProps> = ({
+  symbol,
+  timeframe,
+  selectedStartTime,
   simulationState,
-  currentSimulationId
+  currentSimulationId,
+  onTimeframeChange
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -635,14 +638,16 @@ const Chart: React.FC<ChartProps> = ({
 
   // Refresh markers when new orders are executed
   useEffect(() => {
-    if (lastOrderNotification && 
+    if (lastOrderNotification &&
         lastOrderNotification.type === 'order_executed' &&
         candlestickSeriesRef.current) {
-      
-      // Small delay to ensure the trade is persisted in the database
+
+      console.log('Chart: Order executed, refreshing trade markers after delay');
+      // Delay to ensure the trade is persisted in the database and positions are updated
       const refreshTimeout = setTimeout(() => {
+        console.log('Chart: Executing trade marker refresh for order_executed');
         refreshTradeMarkers();
-      }, 500);
+      }, 1000); // Longer delay to ensure proper sequencing after position updates
 
       return () => clearTimeout(refreshTimeout);
     }
@@ -668,6 +673,25 @@ const Chart: React.FC<ChartProps> = ({
 
   return (
     <div style={{ position: 'relative' }}>
+      {/* Chart Header */}
+      <div style={{
+        padding: '10px 15px',
+        backgroundColor: '#f8f9fa',
+        borderBottom: '1px solid #dee2e6',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}>
+        <h3 style={{ margin: 0, fontSize: '16px', color: '#333' }}>
+          Price Chart - {symbol}
+        </h3>
+        <TimeframeSelector
+          timeframe={timeframe}
+          onTimeframeChange={onTimeframeChange}
+          compact={false}
+          currentSpeed={simulationState?.speed}
+        />
+      </div>
       {isLoading && (
         <div style={{
           position: 'absolute',
@@ -687,7 +711,7 @@ const Chart: React.FC<ChartProps> = ({
       {crosshairData && (
         <div style={{
           position: 'absolute',
-          top: '10px',
+          top: '55px',
           left: '10px',
           backgroundColor: 'rgba(255, 255, 255, 0.95)',
           border: '1px solid #ddd',
