@@ -64,7 +64,7 @@ const Chart: React.FC<ChartProps> = ({
   currentSimulationId,
   onTimeframeChange
 }) => {
-  const { trades } = usePositions();
+  const { trades, pendingOrders } = usePositions();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +75,7 @@ const Chart: React.FC<ChartProps> = ({
   const volumeSeriesRef = useRef<any>(null);
   const chartRef = useRef<any>(null);
   const seriesMarkersRef = useRef<any>(null);
+  const priceLinesRef = useRef<any[]>([]);
   const isInitialLoadComplete = useRef(false);
   const hasReachedEarliestData = useRef(false);
   const [earliestAvailableTime, setEarliestAvailableTime] = useState<number | null>(null);
@@ -146,6 +147,51 @@ const Chart: React.FC<ChartProps> = ({
     }
     return [];
   }, [symbol]);
+
+  const updatePendingOrderLines = useCallback(() => {
+    if (!candlestickSeriesRef.current) {
+      return;
+    }
+
+    // Remove existing price lines
+    priceLinesRef.current.forEach(priceLine => {
+      try {
+        candlestickSeriesRef.current.removePriceLine(priceLine);
+      } catch (err) {
+        console.warn('Failed to remove price line:', err);
+      }
+    });
+    priceLinesRef.current = [];
+
+    // Filter pending orders for current symbol
+    const symbolPendingOrders = pendingOrders.filter(order => order.symbol === symbol);
+
+    // Create price lines for pending orders
+    symbolPendingOrders.forEach(order => {
+      if (!order.order_params) return;
+
+      const getOrderColor = (side: string) => {
+        const sideNormalized = side.toLowerCase();
+        return ['buy', 'open_long', 'close_short'].includes(sideNormalized) ? '#28a745' : '#dc3545';
+      };
+
+      const orderColor = getOrderColor(order.side);
+
+      // Create price line for limit orders
+      if (order.type === 'limit' && order.order_params.limit_price) {
+        const priceLine = candlestickSeriesRef.current.createPriceLine({
+          price: order.order_params.limit_price,
+          color: orderColor,
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: `${order.side.toUpperCase()} ${order.quantity}`,
+        });
+        priceLinesRef.current.push(priceLine);
+      }
+
+    });
+  }, [pendingOrders, symbol]);
 
   const fetchData = useCallback(async (endTime?: number, limit: number = 100, enableIncomplete: boolean = false) => {
     const response_data = await MarketApiService.getHistoricalData(
@@ -504,6 +550,7 @@ const Chart: React.FC<ChartProps> = ({
       volumeSeriesRef.current = null;
       chartRef.current = null;
       seriesMarkersRef.current = null;
+      priceLinesRef.current = [];
       
       window.removeEventListener('resize', handleResize);
       chart.remove();
@@ -629,6 +676,14 @@ const Chart: React.FC<ChartProps> = ({
       seriesMarkersRef.current.setMarkers(markers);
     }
   }, [symbol, timeframe, trades, processTradesIntoMarkers]);
+
+  // Update pending order price lines when orders change
+  useEffect(() => {
+    if (candlestickSeriesRef.current) {
+      console.log('Chart: Pending orders changed, updating price lines');
+      updatePendingOrderLines();
+    }
+  }, [symbol, timeframe, pendingOrders, updatePendingOrderLines]);
 
   if (error) {
     return (
