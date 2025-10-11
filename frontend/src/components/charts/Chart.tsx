@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle, createSeriesMarkers, IChartApi } from 'lightweight-charts';
 import { MarketApiService } from '../../services/marketApi';
 import { CandleAggregator } from '../../utils/CandleAggregator';
 import { formatPrice, formatPercentage } from '../../utils/numberFormat';
@@ -73,7 +73,7 @@ const Chart: React.FC<ChartProps> = ({
   const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
-  const chartRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi>(null);
   const seriesMarkersRef = useRef<any>(null);
   const priceLinesRef = useRef<any[]>([]);
   const isInitialLoadComplete = useRef(false);
@@ -93,6 +93,22 @@ const Chart: React.FC<ChartProps> = ({
     amplitudePercent: number;
   } | null>(null);
   const [isCrosshairActive, setIsCrosshairActive] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  const getCandleStartTime = useCallback((executedTime: number, timeframeStr: string) => {
+    const timeframes: { [key: string]: number } = {
+      '1m': 60 * 1000,
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '30m': 30 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000,
+    };
+
+    const intervalMs = timeframes[timeframeStr] || timeframes['1m'];
+    return Math.floor(executedTime / intervalMs) * intervalMs;
+  }, []);
 
   const fetchEarliestTime = useCallback(async () => {
     try {
@@ -123,7 +139,7 @@ const Chart: React.FC<ChartProps> = ({
         const sideNormalized = side.toLowerCase();
         const isGreenSide = ['buy', 'open_long', 'close_short'].includes(sideNormalized);
         return {
-          color: isGreenSide ? '#28a745' : '#dc3545',
+          color: isGreenSide ? '#2f5becff' : '#ff00eaff',
           position: isGreenSide ? 'belowBar' as const : 'aboveBar' as const,
           shape: isGreenSide ? 'arrowUp' as const : 'arrowDown' as const
         };
@@ -132,12 +148,13 @@ const Chart: React.FC<ChartProps> = ({
       // Create markers for all trades
       const markers = symbolTrades.map((trade: any) => {
         const visuals = getTradeVisuals(trade.side);
+        const candleStartTime = getCandleStartTime(trade.executed_at, timeframe);
         return {
-          time: Math.floor(trade.executed_at / 1000) as any,
+          time: Math.floor(candleStartTime / 1000) as any,
           position: visuals.position,
           color: visuals.color,
           shape: visuals.shape,
-          text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
+          // text: `${trade.side.toUpperCase()} @ ${formatPrice(trade.price)}`
         };
       });
 
@@ -146,7 +163,7 @@ const Chart: React.FC<ChartProps> = ({
       console.warn('Failed to process trades:', err);
     }
     return [];
-  }, [symbol]);
+  }, [symbol, timeframe, getCandleStartTime]);
 
   const updatePendingOrderLines = useCallback(() => {
     if (!candlestickSeriesRef.current) {
@@ -192,6 +209,114 @@ const Chart: React.FC<ChartProps> = ({
 
     });
   }, [pendingOrders, symbol]);
+
+  const handleCrosshairMove = useCallback((param: any, candlestickSeries: any, tradesData?: any[]) => {
+    // Handle trade tooltip only if trades data is provided
+    if (tradesData && tooltipRef.current && chartContainerRef.current && param.point && param.time) {
+      // Check if there are any trades at this time
+      const symbolTrades = tradesData.filter((trade: any) => trade.symbol === symbol);
+      const tradesAtTime = symbolTrades.filter((trade: any) => {
+        const tradeCandleStartTime = getCandleStartTime(trade.executed_at, timeframe);
+        return Math.floor(tradeCandleStartTime / 1000) === (param.time as number);
+      });
+
+      if (tradesAtTime.length > 0 && param.point.x >= 0 && param.point.x <= chartContainerRef.current.clientWidth &&
+          param.point.y >= 0 && param.point.y <= chartContainerRef.current.clientHeight) {
+        // Show tooltip for trades
+        const tooltipWidth = 180;
+        const tooltipHeight = Math.min(120, 60 + tradesAtTime.length * 20);
+        const tooltipMargin = 15;
+
+        let left = param.point.x + tooltipMargin;
+        if (left > chartContainerRef.current.clientWidth - tooltipWidth) {
+          left = param.point.x - tooltipMargin - tooltipWidth;
+        }
+
+        let top = param.point.y + tooltipMargin;
+        if (top > chartContainerRef.current.clientHeight - tooltipHeight) {
+          top = param.point.y - tooltipHeight - tooltipMargin;
+        }
+
+        tooltipRef.current.style.display = 'block';
+        tooltipRef.current.style.left = left + 'px';
+        tooltipRef.current.style.top = top + 'px';
+
+        // Create content for multiple trades
+        const tradesContent = tradesAtTime.map((trade: any) => {
+          const sideColor = ['buy', 'open_long', 'close_short'].includes(trade.side.toLowerCase()) ? '#2f5becff' : '#ff00eaff';
+          return `
+            <div style="margin-bottom: 8px; padding-bottom: 6px; border-bottom: ${tradesAtTime.length > 1 ? '1px solid #eee' : 'none'};">
+              <div style="color: ${sideColor}; font-weight: bold; font-size: 11px;">${trade.side.toUpperCase()}</div>
+              <div style="font-size: 14px; margin: 2px 0px; color: black;">
+                ${trade.quantity} @ ${formatPrice(trade.price)}
+              </div>
+              <div style="color: #666; font-size: 10px;">
+                ${new Date(trade.executed_at).toUTCString()}
+              </div>
+            </div>`;
+        }).join('');
+
+        tooltipRef.current.innerHTML = `
+          <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #333;">
+            ${tradesAtTime.length > 1 ? `${tradesAtTime.length} Trades` : 'Trade'}
+          </div>
+          ${tradesContent}`;
+      } else if (tooltipRef.current) {
+        tooltipRef.current.style.display = 'none';
+      }
+    } else if (tooltipRef.current) {
+      tooltipRef.current.style.display = 'none';
+    }
+
+    // Handle crosshair data display
+    if (param.time !== undefined && param.seriesData) {
+      setIsCrosshairActive(true);
+      const candleData = param.seriesData.get(candlestickSeries);
+      if (candleData && 'open' in candleData && 'high' in candleData && 'low' in candleData && 'close' in candleData) {
+        const change = candleData.close - candleData.open;
+        const changePercent = (change / candleData.open) * 100;
+        const amplitude = candleData.high - candleData.low;
+        const amplitudePercent = (amplitude / candleData.low) * 100;
+
+        setCrosshairData({
+          open: candleData.open,
+          high: candleData.high,
+          low: candleData.low,
+          close: candleData.close,
+          time: param.time as number,
+          change,
+          changePercent,
+          amplitude,
+          amplitudePercent
+        });
+      }
+    } else {
+      setIsCrosshairActive(false);
+      // Show latest candle data when no crosshair
+      const latestData = candlestickSeries.data();
+      if (latestData.length > 0) {
+        const latest = latestData[latestData.length - 1];
+        if ('open' in latest && 'high' in latest && 'low' in latest && 'close' in latest) {
+          const change = latest.close - latest.open;
+          const changePercent = (change / latest.open) * 100;
+          const amplitude = latest.high - latest.low;
+          const amplitudePercent = (amplitude / latest.low) * 100;
+
+          setCrosshairData({
+            open: latest.open,
+            high: latest.high,
+            low: latest.low,
+            close: latest.close,
+            time: latest.time as number,
+            change,
+            changePercent,
+            amplitude,
+            amplitudePercent
+          });
+        }
+      }
+    }
+  }, [symbol, timeframe, getCandleStartTime]);
 
   const fetchData = useCallback(async (endTime?: number, limit: number = 100, enableIncomplete: boolean = false) => {
     const response_data = await MarketApiService.getHistoricalData(
@@ -473,55 +598,7 @@ const Chart: React.FC<ChartProps> = ({
       }
     });
 
-    chart.subscribeCrosshairMove(param => {
-      if (param.time !== undefined && param.seriesData) {
-        setIsCrosshairActive(true);
-        const candleData = param.seriesData.get(candlestickSeries);
-        if (candleData && 'open' in candleData && 'high' in candleData && 'low' in candleData && 'close' in candleData) {
-          const change = candleData.close - candleData.open;
-          const changePercent = (change / candleData.open) * 100;
-          const amplitude = candleData.high - candleData.low;
-          const amplitudePercent = (amplitude / candleData.low) * 100;
-          
-          setCrosshairData({
-            open: candleData.open,
-            high: candleData.high,
-            low: candleData.low,
-            close: candleData.close,
-            time: param.time as number,
-            change,
-            changePercent,
-            amplitude,
-            amplitudePercent
-          });
-        }
-      } else {
-        setIsCrosshairActive(false);
-        // Show latest candle data when no crosshair
-        const latestData = candlestickSeries.data();
-        if (latestData.length > 0) {
-          const latest = latestData[latestData.length - 1];
-          if ('open' in latest && 'high' in latest && 'low' in latest && 'close' in latest) {
-            const change = latest.close - latest.open;
-            const changePercent = (change / latest.open) * 100;
-            const amplitude = latest.high - latest.low;
-            const amplitudePercent = (amplitude / latest.low) * 100;
-            
-            setCrosshairData({
-              open: latest.open,
-              high: latest.high,
-              low: latest.low,
-              close: latest.close,
-              time: latest.time as number,
-              change,
-              changePercent,
-              amplitude,
-              amplitudePercent
-            });
-          }
-        }
-      }
-    });
+    chart.subscribeCrosshairMove(param => handleCrosshairMove(param, candlestickSeries));
 
     // Handle resize
     const handleResize = () => {
@@ -555,7 +632,7 @@ const Chart: React.FC<ChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData]);
+  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData, handleCrosshairMove]);
 
   // Handle simulation real-time updates with frontend aggregation
   useEffect(() => {
@@ -670,10 +747,11 @@ const Chart: React.FC<ChartProps> = ({
   // Refresh markers when trades from context change
   // And also when symbol or timeframe changes to ensure correct markers
   useEffect(() => {
-    if (candlestickSeriesRef.current && seriesMarkersRef.current) {
+    if (chartRef.current && candlestickSeriesRef.current && seriesMarkersRef.current) {
       console.log('Chart: Trades changed, refreshing trade markers');
       const markers = processTradesIntoMarkers(trades);
       seriesMarkersRef.current.setMarkers(markers);
+      chartRef.current.subscribeCrosshairMove(param => handleCrosshairMove(param, candlestickSeriesRef.current, trades));
     }
   }, [symbol, timeframe, trades, processTradesIntoMarkers]);
 
@@ -793,6 +871,27 @@ const Chart: React.FC<ChartProps> = ({
           </div>
         </div>
       )}
+      {/* Trade tooltip */}
+      <div
+        ref={tooltipRef}
+        style={{
+          position: 'absolute',
+          display: 'none',
+          padding: '8px',
+          boxSizing: 'border-box',
+          fontSize: '12px',
+          textAlign: 'left',
+          zIndex: 1000,
+          pointerEvents: 'none',
+          border: '1px solid #ddd',
+          borderRadius: '4px',
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif',
+          background: 'white',
+          color: 'black',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          minWidth: '120px'
+        }}
+      />
       <div ref={chartContainerRef} style={{ }} />
     </div>
   );

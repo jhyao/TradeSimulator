@@ -73,7 +73,7 @@ export interface Trade {
   price: number;
   fee: number;
   created_at: string;
-  executed_at?: string;
+  executed_at: string;
 }
 
 interface PositionsContextType {
