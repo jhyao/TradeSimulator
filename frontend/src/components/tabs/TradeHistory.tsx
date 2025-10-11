@@ -208,7 +208,7 @@ const TradeHistory: React.FC<TradeHistoryProps> = ({
               >
                 <td style={{ padding: '10px 8px' }}>
                   <div style={{ color: '#666' }}>
-                    {formatDateTime(trade.created_at)}
+                    {formatDateTime(trade.executed_at)}
                   </div>
                 </td>
                 <td style={{ padding: '10px 8px' }}>

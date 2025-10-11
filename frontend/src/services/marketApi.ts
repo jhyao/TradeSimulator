@@ -1,3 +1,14 @@
+export interface CandleData {
+  startTime: number;
+  endTime: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  isComplete: boolean;
+}
+
 interface EarliestTimeResponse {
   symbol: string;
   earliestTime: number;
@@ -6,16 +17,7 @@ interface EarliestTimeResponse {
 
 interface HistoricalDataResponse {
   symbol: string;
-  data: Array<{
-    startTime: number;
-    endTime: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    isComplete: boolean;
-  }>;
+  data: CandleData[];
 }
 
 interface ApiError {

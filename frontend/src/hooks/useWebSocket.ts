@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { CandleData } from '../services/marketApi';
 
 export interface WebSocketMessage {
   type: string;
@@ -14,16 +15,7 @@ export interface ConnectionStatusData {
 
 export interface SimulationUpdateData {
   symbol: string;
-  baseCandle: {
-    startTime: number;
-    endTime: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    isComplete: boolean;
-  };
+  baseCandle: CandleData;
   simulationTime: number;
   progress: number;
   state: string;

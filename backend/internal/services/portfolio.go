@@ -164,8 +164,8 @@ func (ps *PortfolioService) GetUserPositions(userID uint, simulationID uint) ([]
 	return positions, nil
 }
 
-// GetFuturesPositionsRaw gets all raw futures positions for a user without calculations
-func (ps *PortfolioService) GetFuturesPositionsRaw(userID uint, simulationID uint) ([]models.FuturesPosition, error) {
+// GetFuturesPositions gets all raw futures positions for a user without calculations
+func (ps *PortfolioService) GetFuturesPositions(userID uint, simulationID uint) ([]models.FuturesPosition, error) {
 	var futuresPositions []models.FuturesPosition
 	if err := ps.db.Where("user_id = ? AND simulation_id = ?", userID, simulationID).Find(&futuresPositions).Error; err != nil {
 		return nil, err

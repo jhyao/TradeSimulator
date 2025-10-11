@@ -101,18 +101,14 @@ const PositionsContext = createContext<PositionsContextType | undefined>(undefin
 
 interface PositionsProviderProps {
   children: ReactNode;
-  connectionState: ConnectionState;
   currentPrice: number;
   symbol: string;
-  simulationState: 'stopped' | 'playing' | 'paused';
 }
 
 export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   children,
-  connectionState,
   currentPrice,
   symbol,
-  simulationState
 }) => {
   const [positions, setPositions] = useState<Position[]>([]);
   const [futuresPositions, setFuturesPositions] = useState<FuturesPosition[]>([]);

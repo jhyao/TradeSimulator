@@ -5,15 +5,15 @@ import (
 	"strconv"
 
 	"tradesimulator/internal/services"
+
 	"github.com/gin-gonic/gin"
 )
 
 // OrderHandler handles order-related HTTP and WebSocket requests
 type OrderHandler struct {
-	orderService      *services.OrderService
-	portfolioService  *services.PortfolioService
+	orderService     *services.OrderService
+	portfolioService *services.PortfolioService
 }
-
 
 // NewOrderHandler creates a new order handler
 func NewOrderHandler(orderService *services.OrderService, portfolioService *services.PortfolioService) *OrderHandler {
@@ -22,7 +22,6 @@ func NewOrderHandler(orderService *services.OrderService, portfolioService *serv
 		portfolioService: portfolioService,
 	}
 }
-
 
 // GetOrders handles HTTP requests to get user orders
 // @Summary Get User Orders
@@ -71,8 +70,8 @@ func (oh *OrderHandler) GetOrders(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"orders": orders,
-		"count":  len(orders),
+		"orders":  orders,
+		"count":   len(orders),
 	})
 }
 
@@ -188,7 +187,7 @@ func (oh *OrderHandler) GetFuturesPositions(c *gin.Context) {
 		return
 	}
 
-	futuresPositions, err := oh.portfolioService.GetFuturesPositionsRaw(userID, uint(simulationID))
+	futuresPositions, err := oh.portfolioService.GetFuturesPositions(userID, uint(simulationID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -198,4 +197,3 @@ func (oh *OrderHandler) GetFuturesPositions(c *gin.Context) {
 		"futures_positions": futuresPositions,
 	})
 }
-

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import Chart from './components/charts/Chart';
+import { CandleData } from './services/marketApi';
 import ControlPanels from './components/controls/ControlPanels';
 import TimeframeSelector, { isTimeframeAllowed, getMinAllowedTimeframe } from './components/charts/TimeframeSelector';
 import OrderPanel from './components/OrderPanel';
@@ -8,7 +9,6 @@ import TradingTabs from './components/tabs/TradingTabs';
 import FloatingMessage from './components/FloatingMessage';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { PositionsProvider } from './contexts/PositionsContext';
-// Removed SimulationApiService import - now using WebSocket
 import './App.css';
 
 interface SimulationState {
@@ -17,16 +17,7 @@ interface SimulationState {
   simulationTime: number | null; // Current simulation time in milliseconds
   startTime: number | null; // Simulation start time in milliseconds
   progress: number;
-  lastCandle: {
-    startTime: number;
-    endTime: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    isComplete: boolean;
-  } | null;
+  lastCandle: CandleData | null;
 }
 
 function AppContent() {
@@ -272,9 +263,21 @@ function AppContent() {
       simulationId: historicalSimulation.id
     });
 
+    // Note: Chart will call onCandleChange callback when data is loaded
+
     console.log('Historical simulation loaded successfully');
   }, [setHistoricalSimulationStatus, setTradingMode]);
 
+  // Handle candle updates from Chart component
+  const handleCandleChange = useCallback((lastCandle: CandleData | null) => {
+    if (lastCandle && !simulationState.lastCandle) {
+      console.log('Chart candle change:', lastCandle);
+      setSimulationState(prev => ({
+        ...prev,
+        lastCandle
+      }));
+    }
+  }, [simulationState]);
 
   // Debounce timer for speed changes
   const speedChangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -383,10 +386,8 @@ function AppContent() {
         
         {/* Main Content Area - Chart and Trading */}
         <PositionsProvider
-          connectionState={connectionState}
           currentPrice={simulationState.lastCandle?.close || 0}
           symbol={symbol}
-          simulationState={simulationState.state}
         >
           <div style={{
             display: 'flex',
@@ -406,8 +407,8 @@ function AppContent() {
                 timeframe={timeframe}
                 selectedStartTime={selectedStartTime}
                 simulationState={simulationState}
-                currentSimulationId={currentSimulationStatus?.simulationID || null}
                 onTimeframeChange={handleTimeframeChange}
+                onCandleChange={handleCandleChange}
               />
             </div>
 

@@ -14,7 +14,7 @@ interface PortfolioSummary {
   totalPnL: number;
   cashBalance: number;
   marginUsed: number;
-  futuresPnL: number;
+  unrealizedPnl: number;
 }
 
 const Portfolio: React.FC<PortfolioProps> = ({ 
@@ -26,7 +26,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
     let totalValue = 0;
     let cashBalance = 0;
     let marginUsed = 0;
-    let futuresPnL = 0;
+    let unrealizedPnl = 0;
 
     // Calculate spot positions
     calculatedPositions.forEach(calcPos => {
@@ -34,18 +34,20 @@ const Portfolio: React.FC<PortfolioProps> = ({
         cashBalance = calcPos.position.quantity;
       }
       totalValue += calcPos.marketValue;
+      // Add spot unrealized P&L
+      unrealizedPnl += calcPos.unrealizedPnL;
     });
 
     // Calculate futures positions
     calculatedFuturesPositions.forEach(calcFuturesPos => {
       marginUsed += calcFuturesPos.position.margin_amount;
-      futuresPnL += calcFuturesPos.unrealizedPnL;
+      unrealizedPnl += calcFuturesPos.unrealizedPnL;
       // Add margin amount to total value (represents invested capital in futures)
       totalValue += calcFuturesPos.position.margin_amount;
     });
 
-    // Add futures P&L to total value
-    totalValue += futuresPnL;
+    // Add unrealized P&L to total value
+    totalValue += unrealizedPnl;
     const totalPnL = totalValue - initialFunding;
 
     return {
@@ -55,7 +57,7 @@ const Portfolio: React.FC<PortfolioProps> = ({
       totalPnL,
       cashBalance,
       marginUsed,
-      futuresPnL
+      unrealizedPnl
     };
   }, [calculatedPositions, calculatedFuturesPositions, initialFunding]);
 
@@ -168,14 +170,14 @@ const Portfolio: React.FC<PortfolioProps> = ({
 
             <div>
               <div style={{ fontSize: '12px', color: '#6c757d', marginBottom: '4px' }}>
-                Futures P&L
+                Unrealized P&L
               </div>
               <div style={{
                 fontSize: '14px',
                 fontWeight: 'bold',
-                color: portfolioData.futuresPnL >= 0 ? '#28a745' : '#dc3545'
+                color: portfolioData.unrealizedPnl >= 0 ? '#28a745' : '#dc3545'
               }}>
-                {portfolioData.futuresPnL >= 0 ? '+' : ''}{formatCurrency(portfolioData.futuresPnL)}
+                {portfolioData.unrealizedPnl >= 0 ? '+' : ''}{formatCurrency(portfolioData.unrealizedPnl)}
               </div>
             </div>
 

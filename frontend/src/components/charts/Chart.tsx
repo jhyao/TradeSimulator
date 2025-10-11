@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, ColorType, CandlestickSeries, HistogramSeries, CrosshairMode, LineStyle, createSeriesMarkers, IChartApi } from 'lightweight-charts';
-import { MarketApiService } from '../../services/marketApi';
+import { MarketApiService, CandleData } from '../../services/marketApi';
 import { CandleAggregator } from '../../utils/CandleAggregator';
 import { formatPrice, formatPercentage } from '../../utils/numberFormat';
-import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { usePositions } from '../../contexts/PositionsContext';
 import TimeframeSelector from './TimeframeSelector';
 
@@ -16,16 +15,7 @@ interface SimulationState {
   simulationTime: number | null; // Current simulation time in milliseconds
   startTime: number | null; // Simulation start time in milliseconds
   progress: number;
-  lastCandle: {
-    startTime: number;
-    endTime: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-    isComplete: boolean;
-  } | null;
+  lastCandle: CandleData | null;
 }
 
 interface ChartProps {
@@ -33,8 +23,8 @@ interface ChartProps {
   timeframe: string;
   selectedStartTime?: Date | null;
   simulationState?: SimulationState;
-  currentSimulationId?: number | null;
   onTimeframeChange: (timeframe: string) => void;
+  onCandleChange?: (lastCandle: CandleData | null) => void;
 }
 
 const color_palette = {
@@ -61,8 +51,8 @@ const Chart: React.FC<ChartProps> = ({
   timeframe,
   selectedStartTime,
   simulationState,
-  currentSimulationId,
-  onTimeframeChange
+  onTimeframeChange,
+  onCandleChange
 }) => {
   const { trades, pendingOrders } = usePositions();
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -383,6 +373,12 @@ const Chart: React.FC<ChartProps> = ({
         volumeSeriesRef.current.setData(volumeData);
       }
 
+      // Call onCandleChange callback after data is loaded
+      if (onCandleChange && rawData.length > 0) {
+        const lastCandle = rawData[rawData.length - 1];
+        onCandleChange(lastCandle);
+      }
+
       // Load and set trade markers
       // const markers = processTradesIntoMarkers(trades);
       // if (seriesMarkersRef.current && markers.length > 0) {
@@ -666,7 +662,12 @@ const Chart: React.FC<ChartProps> = ({
             // Update the chart with aggregated candle data
             candlestickSeriesRef.current.update(candleUpdate);
             volumeSeriesRef.current.update(volumeUpdate);
-            
+
+            // Call onCandleChange callback when simulation candle updates
+            if (onCandleChange) {
+              onCandleChange(aggregatedCandle);
+            }
+
             // Update crosshair info panel with latest simulation data if no active crosshair
             if (!isCrosshairActive) {
               const change = aggregatedCandle.close - aggregatedCandle.open;

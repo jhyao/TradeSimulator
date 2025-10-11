@@ -1,13 +1,4 @@
-interface OHLCV {
-  startTime: number;
-  endTime: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  isComplete: boolean;
-}
+import { CandleData } from '../services/marketApi';
 
 /**
  * CandleAggregator handles progressive candle aggregation in the frontend.
@@ -15,7 +6,7 @@ interface OHLCV {
  */
 export class CandleAggregator {
   private displayTimeframe: string;
-  private incompleteCandle: OHLCV | null = null; // Only one incomplete candle at a time
+  private incompleteCandle: CandleData | null = null; // Only one incomplete candle at a time
   
   constructor(displayTimeframe: string) {
     this.displayTimeframe = displayTimeframe;
@@ -33,7 +24,7 @@ export class CandleAggregator {
    * Adds existing incomplete candle to the aggregator's state
    * This is called when loading historical data with incomplete candles
    */
-  addIncompleteCandle(candle: OHLCV): void {
+  addIncompleteCandle(candle: CandleData): void {
     if (!candle.isComplete) {
       this.incompleteCandle = { ...candle };
     }
@@ -43,7 +34,7 @@ export class CandleAggregator {
    * Processes a base candle from simulation update and returns the updated display candle
    * Returns null if no display candle update is needed
    */
-  processBaseCandle(baseCandle: OHLCV): OHLCV | null {
+  processBaseCandle(baseCandle: CandleData): CandleData | null {
     const displayCandleStart = this.getDisplayCandleStart(baseCandle.startTime);
 
     // Check if this base candle belongs to the current incomplete display candle
@@ -96,7 +87,7 @@ export class CandleAggregator {
   /**
    * Merges a base candle into an existing display candle
    */
-  private mergeCandles(existing: OHLCV, baseCandle: OHLCV): OHLCV {
+  private mergeCandles(existing: CandleData, baseCandle: CandleData): CandleData {
     const intervalDurationMs = this.getIntervalDurationMs(this.displayTimeframe);
     const expectedEndTime = existing.startTime + intervalDurationMs - 1;
     
@@ -115,7 +106,7 @@ export class CandleAggregator {
   /**
    * Creates a new display candle from a base candle
    */
-  private createDisplayCandle(baseCandle: OHLCV, displayCandleStart: number): OHLCV {
+  private createDisplayCandle(baseCandle: CandleData, displayCandleStart: number): CandleData {
     const intervalDurationMs = this.getIntervalDurationMs(this.displayTimeframe);
     const expectedEndTime = displayCandleStart + intervalDurationMs - 1;
     
@@ -150,7 +141,7 @@ export class CandleAggregator {
   /**
    * Gets current incomplete candle for debugging
    */
-  getIncompleteCandle(): OHLCV | null {
+  getIncompleteCandle(): CandleData | null {
     return this.incompleteCandle;
   }
 }

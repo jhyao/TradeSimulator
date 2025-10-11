@@ -227,7 +227,7 @@ const OrderHistory: React.FC<OrderHistoryProps> = ({
               >
                 <td style={{ padding: '10px 8px' }}>
                   <div style={{ color: '#666' }}>
-                    {formatDateTime(order.created_at)}
+                    {formatDateTime(order.placed_at)}
                   </div>
                 </td>
                 <td style={{ padding: '10px 8px' }}>

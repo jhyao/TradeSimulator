@@ -876,13 +876,21 @@ func (se *SimulationEngine) updateSimulationStatus(status models.SimulationStatu
 
 // calculateCurrentPortfolioValue calculates portfolio value without acquiring internal locks
 func (se *SimulationEngine) calculateCurrentPortfolioValue(currentPrice float64, simulationID uint, symbol string) (float64, error) {
-	// Use portfolio service to get positions for current simulation
+	// Use portfolio service to get spot positions for current simulation
 	positions, err := se.portfolioService.GetUserPositions(1, simulationID) // Pass simulationID directly
 	if err != nil {
 		return 0, fmt.Errorf("failed to get positions: %w", err)
 	}
 
+	// Also get futures positions
+	futuresPositions, err := se.portfolioService.GetFuturesPositions(1, simulationID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get futures positions: %w", err)
+	}
+
 	var totalValue float64
+
+	// Calculate value from spot positions
 	for _, position := range positions {
 		var marketValue float64
 
@@ -898,6 +906,18 @@ func (se *SimulationEngine) calculateCurrentPortfolioValue(currentPrice float64,
 		}
 
 		totalValue += marketValue
+	}
+
+	// Calculate value from futures positions (margin + unrealized PnL)
+	for _, futuresPos := range futuresPositions {
+		if futuresPos.Symbol == symbol {
+			// For futures positions, the value contribution is the margin + unrealized PnL
+			unrealizedPnL := futuresPos.CalculatePnL(currentPrice)
+			futuresValue := futuresPos.MarginAmount + unrealizedPnL
+			totalValue += futuresValue
+		}
+		// Note: we don't add anything for futures positions of other symbols
+		// as the margin is already counted in USDT spot positions
 	}
 
 	return totalValue, nil
