@@ -188,24 +188,31 @@ func (ob *OrderBook) RemoveOrder(orderID uint) (*models.Order, error) {
 	return nil, fmt.Errorf("order %d not found in order book", orderID)
 }
 
-// GetOrdersToExecute returns orders that should execute at the current price
-func (ob *OrderBook) GetOrdersToExecute(symbol string, currentPrice float64) []*models.Order {
-	if currentPrice <= 0 {
-		log.Printf("Invalid price for order execution: %.8f", currentPrice)
+// GetOrdersToExecute returns orders that should execute based on candle high/low prices
+// Buy orders (including open_long, close_short) execute when low <= limit price
+// Sell orders (including open_short, close_long) execute when high >= limit price
+func (ob *OrderBook) GetOrdersToExecute(symbol string, highPrice, lowPrice float64) []*models.Order {
+	if highPrice <= 0 || lowPrice <= 0 {
+		log.Printf("Invalid prices for order execution: high=%.8f, low=%.8f", highPrice, lowPrice)
 		return nil
 	}
-	
+
+	if lowPrice > highPrice {
+		log.Printf("Warning: low price (%.8f) > high price (%.8f), swapping values", lowPrice, highPrice)
+		lowPrice, highPrice = highPrice, lowPrice
+	}
+
 	ob.mu.Lock() // Use write lock since we'll be removing orders
 	defer ob.mu.Unlock()
-	
+
 	book, exists := ob.symbolBooks[symbol]
 	if !exists {
 		return nil // No orders for this symbol
 	}
-	
+
 	var ordersToExecute []*models.Order
-	
-	// Check buy orders (execute when current price <= limit price)
+
+	// Check buy orders (execute when low price <= limit price)
 	// Use heap to get best prices first (highest price buy orders)
 	for book.BuyOrders.Len() > 0 {
 		order := (*book.BuyOrders)[0] // Peek at top of heap
@@ -216,9 +223,9 @@ func (ob *OrderBook) GetOrdersToExecute(symbol string, currentPrice float64) []*
 			delete(book.OrderIndex, order.ID)
 			continue
 		}
-		
-		// Buy orders execute when current price <= limit price
-		if currentPrice <= *limitPrice {
+
+		// Buy orders execute when low price <= limit price
+		if lowPrice <= *limitPrice {
 			ordersToExecute = append(ordersToExecute, order)
 			// Remove from buy orders heap and index
 			heap.Pop(book.BuyOrders)
@@ -227,8 +234,8 @@ func (ob *OrderBook) GetOrdersToExecute(symbol string, currentPrice float64) []*
 			break // No more buy orders will execute (heap is sorted)
 		}
 	}
-	
-	// Check sell orders (execute when current price >= limit price)  
+
+	// Check sell orders (execute when high price >= limit price)
 	// Use heap to get best prices first (lowest price sell orders)
 	for book.SellOrders.Len() > 0 {
 		order := (*book.SellOrders)[0] // Peek at top of heap
@@ -239,9 +246,9 @@ func (ob *OrderBook) GetOrdersToExecute(symbol string, currentPrice float64) []*
 			delete(book.OrderIndex, order.ID)
 			continue
 		}
-		
-		// Sell orders execute when current price >= limit price
-		if currentPrice >= *limitPrice {
+
+		// Sell orders execute when high price >= limit price
+		if highPrice >= *limitPrice {
 			ordersToExecute = append(ordersToExecute, order)
 			// Remove from sell orders heap and index
 			heap.Pop(book.SellOrders)
@@ -250,12 +257,12 @@ func (ob *OrderBook) GetOrdersToExecute(symbol string, currentPrice float64) []*
 			break // No more sell orders will execute (heap is sorted)
 		}
 	}
-	
+
 	if len(ordersToExecute) > 0 {
-		log.Printf("Found %d orders to execute for %s at price %.8f", 
-			len(ordersToExecute), symbol, currentPrice)
+		log.Printf("Found %d orders to execute for %s (high: %.8f, low: %.8f)",
+			len(ordersToExecute), symbol, highPrice, lowPrice)
 	}
-	
+
 	return ordersToExecute
 }
 

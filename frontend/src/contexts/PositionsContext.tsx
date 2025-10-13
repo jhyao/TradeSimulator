@@ -113,6 +113,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   const [positions, setPositions] = useState<Position[]>([]);
   const [futuresPositions, setFuturesPositions] = useState<FuturesPosition[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -282,6 +283,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   const fetchOrders = useCallback(async () => {
     if (!currentSimulationStatus?.simulationID) {
       setOrders([]);
+      setPendingOrders([]);
       setOrdersError('No simulation running. Start a simulation to see orders.');
       return;
     }
@@ -304,7 +306,9 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
       }
 
       const data = await response.json();
-      setOrders(data.orders || []);
+      const ordersData = data.orders || [];
+      setOrders(ordersData);
+      setPendingOrders(ordersData.filter((order: Order) => order.status === 'pending'));
       setLastRefresh(new Date());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
@@ -389,7 +393,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
           fetchOrders();
           fetchTrades();
         }, 500);
-      } else if (type === 'order_placed' || type === 'order_cancelled') {
+      } else if (type === 'order_placed' || type === 'order_cancelled' || type === 'order_failed') {
         console.log(`PositionsContext: ${type}, refreshing orders after delay`);
         setTimeout(() => {
           console.log(`PositionsContext: Executing orders refresh for ${type}`);
@@ -401,9 +405,6 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
 
   const calculatedPositions = calculatePositions(positions, currentPrice, symbol);
   const calculatedFuturesPositions = calculateFuturesPositions(futuresPositions, currentPrice);
-
-  // Filter pending orders from all orders
-  const pendingOrders = orders.filter(order => order.status === 'pending');
 
   const value: PositionsContextType = {
     positions,

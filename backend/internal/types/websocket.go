@@ -22,6 +22,7 @@ const (
 	OrderPlaced         MessageType = "order_placed"
 	OrderExecuted       MessageType = "order_executed"
 	OrderCancelled      MessageType = "order_cancelled"
+	OrderFailed         MessageType = "order_failed"
 )
 
 // WebSocketMessage represents a WebSocket message

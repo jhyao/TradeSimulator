@@ -22,18 +22,10 @@ type OrderCancelData struct {
 	OrderID uint `json:"order_id"`
 }
 
-type OrderControlResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-}
-
 // OrderEventHandlerImpl handles order-related WebSocket events
 type OrderEventHandlerImpl struct {
 	orderService     *services.OrderService
 	portfolioService *services.PortfolioService
-	// Remove global engines - now each client has its own
 }
 
 // NewOrderEventHandler creates a new order event handler
@@ -66,61 +58,6 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		return nil
 	}
 
-	// Convert side string to OrderSide enum
-	var side string
-	switch orderData.Side {
-	case "buy":
-		side = "buy"
-	case "sell":
-		side = "sell"
-	case "open_long":
-		side = "open_long"
-	case "open_short":
-		side = "open_short"
-	case "close_long":
-		side = "close_long"
-	case "close_short":
-		side = "close_short"
-	default:
-		client.SendError("Invalid order side", "Side must be 'buy', 'sell', 'open_long', 'open_short', 'close_long', or 'close_short'")
-		return nil
-	}
-
-	// Validate order type and limit price
-	orderType := orderData.Type
-	if orderType == "" {
-		orderType = "market" // Default to market order for backward compatibility
-	}
-
-	if orderType != "market" && orderType != "limit" {
-		client.SendError("Invalid order type", "Type must be 'market' or 'limit'")
-		return nil
-	}
-
-	if orderType == "limit" && orderData.LimitPrice == nil {
-		client.SendError("Missing limit price", "Limit price is required for limit orders")
-		return nil
-	}
-
-	if orderType == "limit" && *orderData.LimitPrice <= 0 {
-		client.SendError("Invalid limit price", "Limit price must be positive")
-		return nil
-	}
-
-	// Validate futures orders
-	isFuturesOrder := side == "open_long" || side == "open_short" || side == "close_long" || side == "close_short"
-	if isFuturesOrder {
-		// Validate leverage for futures orders
-		if orderData.Leverage == nil {
-			client.SendError("Missing leverage", "Leverage is required for futures orders")
-			return nil
-		}
-		if *orderData.Leverage < 1.0 || *orderData.Leverage > 20.0 {
-			client.SendError("Invalid leverage", "Leverage must be between 1x and 20x")
-			return nil
-		}
-	}
-
 	// Check if simulation is running and get current data
 	status := client.SimulationEngine.GetStatus()
 	if !status.IsRunning {
@@ -128,46 +65,39 @@ func (h *OrderEventHandlerImpl) handlePlaceOrder(client *Client, data interface{
 		return nil
 	}
 
-	if status.CurrentPrice <= 0 {
-		client.SendError("Invalid current price", "Cannot determine current price")
-		return nil
+	// Convert side string to OrderSide enum
+	side := models.OrderSide(orderData.Side)
+
+	// Convert type string to OrderType enum (default to market)
+	orderType := models.OrderType(orderData.Type)
+	if orderType == "" {
+		orderType = models.OrderTypeMarket
 	}
 
-	// Place the order using the client's order execution engine (using default user ID 1 for now)
-	var order *models.Order
-	var trade *models.Trade
-	var err error
-
-	// Create order with appropriate parameters
-	orderSide := models.OrderSide(side)
-
-	if orderType == "market" {
-		if isFuturesOrder {
-			order, trade, err = client.OrderEngine.ExecuteFuturesMarketOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.Leverage, status.CurrentPrice, status.SimulationTime)
-		} else {
-			order, trade, err = client.OrderEngine.ExecuteMarketOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, status.CurrentPrice, status.SimulationTime)
-		}
-	} else if orderType == "limit" {
-		if isFuturesOrder {
-			order, err = client.OrderEngine.PlaceFuturesLimitOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.Leverage, *orderData.LimitPrice, status.SimulationTime)
-		} else {
-			order, err = client.OrderEngine.PlaceLimitOrder(1, status.SimulationID, orderData.Symbol, orderSide, orderData.Quantity, *orderData.LimitPrice, status.SimulationTime)
-		}
-		// Limit orders don't have immediate trades, they are placed as pending
-		trade = nil
-	}
+	// Place the order using the unified PlaceOrder interface
+	// The engine will handle all validation
+	order, trade, err := client.OrderEngine.PlaceOrder(
+		1, // userID (default user for now)
+		status.SimulationID,
+		orderData.Symbol,
+		side,
+		orderType,
+		orderData.Quantity,
+		orderData.LimitPrice,
+		orderData.Leverage,
+		status.CurrentPrice,
+		status.SimulationTime,
+	)
 
 	if err != nil {
 		client.SendError("Failed to place order", err.Error())
 		return nil
 	}
 
-	responseData := map[string]interface{}{
-		"order": order,
-	}
-	if trade != nil {
-		responseData["trade"] = trade
-	}
+	// Success response is sent by the engine via sendOrderUpdate
+	// We don't need to send additional response here
+	_ = order
+	_ = trade
 
 	return nil
 }

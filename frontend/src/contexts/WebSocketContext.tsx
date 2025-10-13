@@ -173,6 +173,19 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           // Show floating message for order cancelled
           addFloatingMessage(cancelledOrderMsg, 'status');
           break;
+        case 'order_failed':
+          const failedOrder = lastMessage.data.order;
+          const failedOrderMsg = `${failedOrder?.side?.toUpperCase() || 'ORDER'} order failed: ${failedOrder?.quantity || '?'} ${failedOrder?.symbol || ''}`;
+          console.error('Order failed received:', { order: failedOrder });
+          setLastOrderNotification({
+            type: 'order_failed',
+            order: failedOrder,
+            message: failedOrderMsg,
+            timestamp: Date.now()
+          });
+          // Show floating error message for order failed
+          addFloatingMessage(failedOrderMsg, 'error');
+          break;
         case 'order_control_response':
           handleOrderControlResponse(lastMessage);
           break;

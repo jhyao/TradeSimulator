@@ -72,7 +72,7 @@ type SimulationEngine struct {
 
 	// Order execution integration
 	orderExecutionEngine interface {
-		ProcessPriceUpdate(symbol string, currentPrice float64, simulationTime int64) ([]*models.Trade, error)
+		ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
 		LoadPendingOrders(simulationID uint) error
 	} // Order execution engine for processing limit orders
 }
@@ -102,7 +102,7 @@ type SimulationStatus struct {
 }
 
 func NewSimulationEngine(client ClientMessageSender, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface, positionDAO tradingDAO.PositionDAOInterface, orderEngine interface {
-	ProcessPriceUpdate(symbol string, currentPrice float64, simulationTime int64) ([]*models.Trade, error)
+	ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
 	LoadPendingOrders(simulationID uint) error
 }) *SimulationEngine {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -363,12 +363,12 @@ func (se *SimulationEngine) processNextBaseUpdate() bool {
 			se.currentPrice = baseCandle.Close
 			se.currentPriceTime = baseCandle.EndTime
 
-			// Process limit orders at the new price (before sending to client)
+			// Process limit orders using candle high/low/close prices (before sending to client)
 			if se.orderExecutionEngine != nil {
-				if trades, err := se.orderExecutionEngine.ProcessPriceUpdate(se.symbol, se.currentPrice, se.currentPriceTime); err != nil {
-					log.Printf("Error processing limit orders at price %.8f: %v", se.currentPrice, err)
+				if trades, err := se.orderExecutionEngine.ProcessPriceUpdate(se.symbol, baseCandle.High, baseCandle.Low, baseCandle.Close, se.currentPriceTime); err != nil {
+					log.Printf("Error processing limit orders for candle (high: %.8f, low: %.8f, close: %.8f): %v", baseCandle.High, baseCandle.Low, baseCandle.Close, err)
 				} else if len(trades) > 0 {
-					log.Printf("Processed %d limit order executions at price %.8f", len(trades), se.currentPrice)
+					log.Printf("Processed %d limit order executions for candle (high: %.8f, low: %.8f, close: %.8f)", len(trades), baseCandle.High, baseCandle.Low, baseCandle.Close)
 				}
 			}
 

@@ -148,6 +148,9 @@ const Chart: React.FC<ChartProps> = ({
         };
       });
 
+      // Sort markers by time to ensure correct display order
+      markers.sort((a, b) => a.time - b.time);
+
       return markers;
     } catch (err) {
       console.warn('Failed to process trades:', err);
