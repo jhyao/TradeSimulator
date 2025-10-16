@@ -3,6 +3,7 @@ import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { usePositions } from '../contexts/PositionsContext';
 import { ConnectionState } from '../hooks/useWebSocket';
 import { formatCurrency } from '../utils/numberFormat';
+import QuickTradeSettings, { QuickTradeButton } from './QuickTradeSettings';
 
 interface OrderPanelProps {
   symbol: string;
@@ -23,10 +24,12 @@ interface OrderState {
   lastOrderMessage: string;
 }
 
-const OrderPanel: React.FC<OrderPanelProps> = ({ 
-  symbol, 
-  currentPrice, 
-  simulationState 
+const STORAGE_KEY = 'quickTradeButtons';
+
+const OrderPanel: React.FC<OrderPanelProps> = ({
+  symbol,
+  currentPrice,
+  simulationState
 }) => {
   const { connectionState, placeOrder, lastOrderNotification, tradingMode, leverage } = useWebSocketContext();
   const { calculatedPositions, calculatedFuturesPositions } = usePositions();
@@ -42,6 +45,47 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     lastOrderStatus: null,
     lastOrderMessage: ''
   });
+
+  // Quick Trade Mode state
+  const [quickTradeMode, setQuickTradeMode] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [quickTradeButtons, setQuickTradeButtons] = useState<QuickTradeButton[]>([]);
+
+  // Load quick trade buttons from localStorage on mount and filter by trading mode
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const allButtons: QuickTradeButton[] = JSON.parse(stored);
+        // Filter buttons by current trading mode
+        const modeButtons = allButtons.filter(btn => btn.tradingMode === tradingMode);
+        setQuickTradeButtons(modeButtons);
+      }
+    } catch (error) {
+      console.error('Failed to load quick trade buttons:', error);
+    }
+  }, [tradingMode]);
+
+  // Save quick trade buttons to localStorage
+  const saveQuickTradeButtons = useCallback((buttons: QuickTradeButton[]) => {
+    try {
+      // Load all existing buttons from localStorage
+      const stored = localStorage.getItem(STORAGE_KEY);
+      const allButtons: QuickTradeButton[] = stored ? JSON.parse(stored) : [];
+
+      // Remove buttons for the current trading mode and add the new ones
+      const otherModeButtons = allButtons.filter(btn => btn.tradingMode !== tradingMode);
+      const updatedButtons = [...otherModeButtons, ...buttons];
+
+      // Save all buttons back to localStorage
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedButtons));
+
+      // Update state with buttons for current mode only
+      setQuickTradeButtons(buttons);
+    } catch (error) {
+      console.error('Failed to save quick trade buttons:', error);
+    }
+  }, [tradingMode]);
 
   const isDisabled = (simulationState !== 'playing' && simulationState !== 'paused') || 
                     connectionState !== ConnectionState.CONNECTED ||
@@ -385,6 +429,118 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
   }, [handlePlaceOrder, isDisabled]);
 
+  // Quick trade button click handler
+  const handleQuickTradeClick = useCallback(async (button: QuickTradeButton) => {
+    if (isDisabled) return;
+
+    try {
+      // Temporarily set the side to calculate max quantity correctly
+      const prevSide = orderState.side;
+      setOrderState(prev => ({ ...prev, side: button.side }));
+
+      // Calculate quantity based on position size type
+      let quantity = 0;
+
+      if (button.positionSizeType === 'quantity') {
+        // Direct quantity specified
+        quantity = button.positionQuantity || 0;
+      } else {
+        // Calculate quantity based on percentage
+        let maxQty = 0;
+        if (button.side === 'buy') {
+          const cashBalance = getCashBalance();
+          const price = currentPrice;
+          if (price > 0) {
+            maxQty = cashBalance / 1.01 / price;
+          }
+        } else if (button.side === 'sell') {
+          maxQty = getSymbolPosition();
+        } else if (button.side === 'open_long' || button.side === 'open_short') {
+          const cashBalance = getCashBalance();
+          const price = currentPrice;
+          if (price > 0 && leverage > 0) {
+            maxQty = cashBalance / 1.01 / price * leverage; // Adjusted for leverage and fees
+          }
+        } else if (button.side === 'close_long' || button.side === 'close_short') {
+          const positionSide = button.side === 'close_long' ? 'long' : 'short';
+          const futuresPosition = calculatedFuturesPositions.find(pos =>
+            pos.position.symbol === symbol &&
+            pos.position.position_side === positionSide
+          );
+          maxQty = futuresPosition ? Math.abs(futuresPosition.position.size) : 0;
+        }
+
+        quantity = floorToDecimals(((button.positionPercent || 0) / 100) * maxQty, 3);
+      }
+
+      // Restore original side
+      setOrderState(prev => ({ ...prev, side: prevSide }));
+
+      if (quantity <= 0) {
+        setOrderState(prev => ({
+          ...prev,
+          lastOrderStatus: 'error',
+          lastOrderMessage: 'Insufficient balance for this trade'
+        }));
+        return;
+      }
+
+      // Calculate price for limit orders
+      let limitPrice: number | undefined = undefined;
+      if (button.priceType === 'limit') {
+        if (button.priceOffsetType === 'percent' && button.priceOffset !== undefined) {
+          // Percentage offset
+          limitPrice = currentPrice * (1 + button.priceOffset / 100);
+        } else if (button.priceOffsetType === 'absolute' && button.priceOffset !== undefined) {
+          // Absolute offset
+          limitPrice = currentPrice + button.priceOffset;
+        } else {
+          // No offset, use market price
+          limitPrice = currentPrice;
+        }
+      }
+
+      // Validate minimum order value
+      const orderValue = quantity * (limitPrice || currentPrice);
+      if (orderValue < 1) {
+        setOrderState(prev => ({
+          ...prev,
+          lastOrderStatus: 'error',
+          lastOrderMessage: 'Order value must be at least $1'
+        }));
+        return;
+      }
+
+      setOrderState(prev => ({
+        ...prev,
+        isPlacing: true,
+        lastOrderStatus: null,
+        lastOrderMessage: ''
+      }));
+
+      // Place the order
+      const isFutures = button.side === 'open_long' || button.side === 'open_short' ||
+                       button.side === 'close_long' || button.side === 'close_short';
+      await placeOrder(
+        symbol,
+        button.side,
+        quantity,
+        button.priceType,
+        limitPrice,
+        isFutures ? leverage : undefined
+      );
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setOrderState(prev => ({
+        ...prev,
+        lastOrderStatus: 'error',
+        lastOrderMessage: `Failed to place order: ${errorMessage}`,
+        isPlacing: false
+      }));
+    }
+  }, [isDisabled, orderState, floorToDecimals, currentPrice, symbol, placeOrder, leverage, getCashBalance, getSymbolPosition, calculatedFuturesPositions]);
+
   const effectivePrice = orderState.type === 'limit' && orderState.limitPrice 
     ? parseFloat(orderState.limitPrice) 
     : currentPrice;
@@ -406,15 +562,159 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       padding: '20px',
       boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
     }}>
-      <h3 style={{
-        margin: '0 0 20px 0',
-        fontSize: '18px',
-        color: '#333',
-        textAlign: 'center'
+      {/* Header with Quick Trade Toggle */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '20px'
       }}>
-        Place Order
-      </h3>
+        <h3 style={{
+          margin: 0,
+          fontSize: '18px',
+          color: '#333'
+        }}>
+          {quickTradeMode ? 'Quick Trade' : 'Place Order'}
+        </h3>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button
+            onClick={() => setQuickTradeMode(!quickTradeMode)}
+            style={{
+              padding: '6px 12px',
+              border: `1px solid ${quickTradeMode ? '#007bff' : '#dee2e6'}`,
+              borderRadius: '4px',
+              backgroundColor: quickTradeMode ? '#007bff' : 'white',
+              color: quickTradeMode ? 'white' : '#6c757d',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: quickTradeMode ? 'bold' : 'normal',
+              transition: 'all 0.2s'
+            }}
+          >
+            Quick Mode
+          </button>
+          {quickTradeMode && (
+            <button
+              onClick={() => setShowSettings(true)}
+              style={{
+                width: '32px',
+                height: '32px',
+                border: '1px solid #dee2e6',
+                borderRadius: '4px',
+                backgroundColor: 'white',
+                cursor: 'pointer',
+                fontSize: '16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#6c757d'
+              }}
+              title="Configure Quick Trade Buttons"
+            >
+              ⚙️
+            </button>
+          )}
+        </div>
+      </div>
 
+      {/* Quick Trade Mode - Show custom buttons */}
+      {quickTradeMode ? (
+        <div>
+          {quickTradeButtons.length > 0 ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
+              gap: '10px',
+              marginBottom: '15px'
+            }}>
+              {quickTradeButtons.map((button) => (
+                <button
+                  key={button.id}
+                  onClick={() => handleQuickTradeClick(button)}
+                  disabled={isDisabled}
+                  style={{
+                    padding: '12px 8px',
+                    border: 'none',
+                    borderRadius: '6px',
+                    backgroundColor: isDisabled ? '#6c757d' : button.color,
+                    color: 'white',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    transition: 'opacity 0.2s',
+                    opacity: isDisabled ? 0.6 : 1,
+                    textAlign: 'center',
+                    lineHeight: '1.3'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.opacity = '0.85';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.opacity = '1';
+                  }}
+                >
+                  {button.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div style={{
+              padding: '40px 20px',
+              textAlign: 'center',
+              border: '2px dashed #dee2e6',
+              borderRadius: '6px',
+              marginBottom: '15px'
+            }}>
+              <div style={{ fontSize: '14px', color: '#6c757d', marginBottom: '10px' }}>
+                No quick trade buttons configured
+              </div>
+              <button
+                onClick={() => setShowSettings(true)}
+                style={{
+                  padding: '8px 16px',
+                  border: '1px solid #007bff',
+                  borderRadius: '4px',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}
+              >
+                Configure Buttons
+              </button>
+            </div>
+          )}
+
+          {/* Status Message */}
+          {orderState.lastOrderMessage && (
+            <div style={{
+              padding: '10px',
+              borderRadius: '6px',
+              fontSize: '14px',
+              backgroundColor: orderState.lastOrderStatus === 'success' ? '#d4edda' : '#f8d7da',
+              color: orderState.lastOrderStatus === 'success' ? '#155724' : '#721c24',
+              border: `1px solid ${orderState.lastOrderStatus === 'success' ? '#c3e6cb' : '#f5c6cb'}`
+            }}>
+              {orderState.lastOrderMessage}
+            </div>
+          )}
+
+          {/* Connection Status */}
+          {connectionState !== ConnectionState.CONNECTED && (
+            <div style={{
+              marginTop: '10px',
+              fontSize: '12px',
+              color: '#6c757d',
+              textAlign: 'center'
+            }}>
+              WebSocket: {connectionState}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Normal Order Form */
+        <>
       {/* Order Side Toggle - Different layout for spot vs futures */}
       {tradingMode === 'spot' ? (
         <div style={{
@@ -1095,6 +1395,17 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           WebSocket: {connectionState}
         </div>
       )}
+      </>
+      )}
+
+      {/* Quick Trade Settings Modal */}
+      <QuickTradeSettings
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        onSave={saveQuickTradeButtons}
+        initialButtons={quickTradeButtons}
+        tradingMode={tradingMode}
+      />
     </div>
   );
 };
