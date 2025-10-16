@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import { usePositions } from '../contexts/PositionsContext';
 import { ConnectionState } from '../hooks/useWebSocket';
@@ -9,6 +9,7 @@ interface OrderPanelProps {
   symbol: string;
   currentPrice: number;
   simulationState: 'stopped' | 'playing' | 'paused';
+  externalLimitPrice?: number | null;
 }
 
 interface OrderState {
@@ -16,6 +17,8 @@ interface OrderState {
   type: 'market' | 'limit';
   quantity: string;
   limitPrice: string;
+  priceMode: 'absolute' | 'offset'; // New: price entry mode
+  priceOffset: string; // New: offset from current price
   percentage: number;
   quantityStep: string;
   priceStep: string;
@@ -29,7 +32,8 @@ const STORAGE_KEY = 'quickTradeButtons';
 const OrderPanel: React.FC<OrderPanelProps> = ({
   symbol,
   currentPrice,
-  simulationState
+  simulationState,
+  externalLimitPrice
 }) => {
   const { connectionState, placeOrder, lastOrderNotification, tradingMode, leverage } = useWebSocketContext();
   const { calculatedPositions, calculatedFuturesPositions } = usePositions();
@@ -38,6 +42,8 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     type: 'market',
     quantity: '',
     limitPrice: '',
+    priceMode: 'absolute',
+    priceOffset: '',
     percentage: 0,
     quantityStep: '1',
     priceStep: '1',
@@ -114,13 +120,30 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     return symbolPosition ? symbolPosition.position.quantity : 0;
   }, [calculatedPositions, symbol]);
 
-  const getEffectivePrice = useCallback((): number => {
-    if (orderState.type === 'limit' && orderState.limitPrice) {
+  const getCalculatedLimitPrice = useCallback((): number => {
+    if (orderState.priceMode === 'offset' && orderState.priceOffset) {
+      const offset = parseFloat(orderState.priceOffset);
+      if (!isNaN(offset)) {
+        // For buy/open_long/close_short: current price - offset
+        // For sell/open_short/close_long: current price + offset
+        const isBuySide = ['buy', 'open_long', 'close_short'].includes(orderState.side);
+        return isBuySide ? currentPrice - offset : currentPrice + offset;
+      }
+    } else if (orderState.priceMode === 'absolute' && orderState.limitPrice) {
       const limitPrice = parseFloat(orderState.limitPrice);
-      return !isNaN(limitPrice) && limitPrice > 0 ? limitPrice : currentPrice;
+      if (!isNaN(limitPrice) && limitPrice > 0) {
+        return limitPrice;
+      }
     }
     return currentPrice;
-  }, [orderState.type, orderState.limitPrice, currentPrice]);
+  }, [orderState, currentPrice]);
+
+  const getEffectivePrice = useCallback((): number => {
+    if (orderState.type === 'limit') {
+      return getCalculatedLimitPrice();
+    }
+    return currentPrice;
+  }, [orderState.type, getCalculatedLimitPrice, currentPrice]);
 
   const calculateMaxQuantity = useCallback((): number => {
     if (orderState.side === 'buy') {
@@ -247,25 +270,56 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
   const handleLimitPriceChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Allow only positive numbers with up to 8 decimal places
-    if (value === '' || /^\d*\.?\d{0,8}$/.test(value)) {
+    // Allow only positive numbers with up to 2 decimal places
+    if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
       setOrderState(prev => ({ ...prev, limitPrice: value }));
     }
   }, []);
 
-  // Update percentage when price changes (for limit orders) or balance changes
+  const handlePriceOffsetChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Allow only positive numbers with up to 2 decimal places
+    if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+      setOrderState(prev => ({ ...prev, priceOffset: value }));
+    }
+  }, []);
+
+  // Handle external limit price updates from chart click
   useEffect(() => {
-    if (orderState.quantity && !isNaN(parseFloat(orderState.quantity))) {
-      const quantity = parseFloat(orderState.quantity);
-      const calculatedPercentage = calculatePercentageFromQuantity(quantity);
-      if (Math.abs(calculatedPercentage - orderState.percentage) > 0.1) {
-        setOrderState(prev => ({
-          ...prev,
-          percentage: calculatedPercentage
-        }));
+    if (externalLimitPrice !== null && externalLimitPrice !== undefined && orderState.type === 'limit') {
+      setOrderState(prev => ({
+        ...prev,
+        priceMode: 'absolute', // Switch to absolute mode when selecting from chart
+        limitPrice: externalLimitPrice.toFixed(2)
+      }));
+    }
+  }, [externalLimitPrice, orderState.type]);
+
+  // Update percentage when price/balance changes affect max quantity
+  // This keeps percentage in sync when external factors change (not when user changes quantity/percentage)
+  const prevMaxQuantityRef = useRef<number>(0);
+  useEffect(() => {
+    const currentMaxQuantity = calculateMaxQuantity();
+
+    // Only update if max quantity actually changed (price/balance changed)
+    if (Math.abs(currentMaxQuantity - prevMaxQuantityRef.current) > 0.001) {
+      prevMaxQuantityRef.current = currentMaxQuantity;
+
+      if (orderState.quantity && !isNaN(parseFloat(orderState.quantity))) {
+        const quantity = parseFloat(orderState.quantity);
+        const calculatedPercentage = calculatePercentageFromQuantity(quantity);
+
+        // Only update if percentage changed significantly
+        if (Math.abs(calculatedPercentage - orderState.percentage) > 0.1) {
+          setOrderState(prev => ({
+            ...prev,
+            percentage: calculatedPercentage
+          }));
+        }
       }
     }
-  }, [currentPrice, orderState.limitPrice, calculatedPositions, orderState.quantity, calculatePercentageFromQuantity, orderState.percentage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPrice, orderState.limitPrice, orderState.priceOffset, calculatedPositions, calculateMaxQuantity, calculatePercentageFromQuantity]);
 
   const handlePercentageChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const percentage = parseFloat(e.target.value);
@@ -290,7 +344,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     if (orderState.type === 'limit' && currentPrice > 0) {
       setOrderState(prev => ({
         ...prev,
-        limitPrice: currentPrice.toString()
+        limitPrice: currentPrice.toFixed(2)
       }));
     }
   }, [orderState.type, currentPrice]);
@@ -312,7 +366,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
   const handlePriceIncrement = useCallback((amount: number) => {
     const currentPrice = parseFloat(orderState.limitPrice) || 0;
     const newPrice = Math.max(0, currentPrice + amount);
-    const newPriceStr = newPrice.toFixed(8).replace(/\.?0+$/, '');
+    const newPriceStr = newPrice.toFixed(2);
 
     setOrderState(prev => ({
       ...prev,
@@ -322,44 +376,63 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
   const handleQuantityStepChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Allow only positive numbers with up to 8 decimal places
-    if (value === '' || /^\d*\.?\d{0,8}$/.test(value)) {
+    // Allow only positive numbers with up to 3 decimal places
+    if (value === '' || /^\d*\.?\d{0,3}$/.test(value)) {
       setOrderState(prev => ({ ...prev, quantityStep: value }));
     }
   }, []);
 
   const handlePriceStepChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Allow only positive numbers with up to 8 decimal places
-    if (value === '' || /^\d*\.?\d{0,8}$/.test(value)) {
+    // Allow only positive numbers with up to 2 decimal places
+    if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
       setOrderState(prev => ({ ...prev, priceStep: value }));
     }
   }, []);
 
   const validateOrder = useCallback((): string | null => {
     const quantity = parseFloat(orderState.quantity);
-    
+
     if (!orderState.quantity || isNaN(quantity) || quantity <= 0) {
       return 'Please enter a valid quantity';
     }
-    
+
     if (quantity > 999999) {
       return 'Quantity too large';
     }
 
     // Validate limit price for limit orders
     if (orderState.type === 'limit') {
-      const limitPrice = parseFloat(orderState.limitPrice);
-      if (!orderState.limitPrice || isNaN(limitPrice) || limitPrice <= 0) {
-        return 'Please enter a valid limit price';
+      // Check if price input is provided based on current mode
+      if (orderState.priceMode === 'absolute') {
+        const limitPrice = parseFloat(orderState.limitPrice);
+        if (!orderState.limitPrice || isNaN(limitPrice) || limitPrice <= 0) {
+          return 'Please enter a valid limit price';
+        }
+        if (limitPrice > 999999) {
+          return 'Limit price too large';
+        }
+      } else if (orderState.priceMode === 'offset') {
+        const priceOffset = parseFloat(orderState.priceOffset);
+        if (!orderState.priceOffset || isNaN(priceOffset) || priceOffset < 0) {
+          return 'Please enter a valid price offset';
+        }
+        if (priceOffset > 999999) {
+          return 'Price offset too large';
+        }
       }
-      
-      if (limitPrice > 999999) {
-        return 'Limit price too large';
+
+      // Validate the calculated limit price
+      const calculatedPrice = getCalculatedLimitPrice();
+      if (calculatedPrice <= 0) {
+        return 'Calculated limit price must be positive';
       }
-      
-      // Check minimum order value using limit price
-      const totalValue = quantity * limitPrice;
+      if (calculatedPrice > 999999) {
+        return 'Calculated limit price is too large';
+      }
+
+      // Check minimum order value using calculated price
+      const totalValue = quantity * calculatedPrice;
       if (totalValue < 1) {
         return 'Order value must be at least $1';
       }
@@ -374,7 +447,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
 
     return null;
-  }, [orderState.quantity, orderState.limitPrice, orderState.type, currentPrice]);
+  }, [orderState, currentPrice, getCalculatedLimitPrice]);
 
   const handlePlaceOrder = useCallback(async () => {
     const validationError = validateOrder();
@@ -396,7 +469,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
     try {
       const quantity = parseFloat(orderState.quantity);
-      const limitPrice = orderState.type === 'limit' ? parseFloat(orderState.limitPrice) : undefined;
+      const limitPrice = orderState.type === 'limit' ? getCalculatedLimitPrice() : undefined;
 
       // Send order via WebSocket context - pass leverage for futures orders
       await placeOrder(symbol, orderState.side, quantity, orderState.type, limitPrice,
@@ -421,7 +494,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     } finally {
       setOrderState(prev => ({ ...prev, isPlacing: false }));
     }
-  }, [symbol, orderState.side, orderState.quantity, orderState.type, orderState.limitPrice, placeOrder, validateOrder, isFuturesOrder, leverage]);
+  }, [symbol, orderState, placeOrder, validateOrder, isFuturesOrder, leverage]);
 
   const handleKeyPress = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isDisabled) {
@@ -541,12 +614,12 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
   }, [isDisabled, orderState, floorToDecimals, currentPrice, symbol, placeOrder, leverage, getCashBalance, getSymbolPosition, calculatedFuturesPositions]);
 
-  const effectivePrice = orderState.type === 'limit' && orderState.limitPrice 
-    ? parseFloat(orderState.limitPrice) 
+  const effectivePrice = orderState.type === 'limit'
+    ? getCalculatedLimitPrice()
     : currentPrice;
 
-  const estimatedTotal = orderState.quantity && !isNaN(parseFloat(orderState.quantity)) 
-    ? parseFloat(orderState.quantity) * effectivePrice 
+  const estimatedTotal = orderState.quantity && !isNaN(parseFloat(orderState.quantity))
+    ? parseFloat(orderState.quantity) * effectivePrice
     : 0;
 
   const fee = estimatedTotal * 0.001; // 0.1% fee
@@ -895,15 +968,62 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       {/* Limit Price Input - Only show for limit orders */}
       {orderState.type === 'limit' && (
         <div style={{ marginBottom: '15px' }}>
-          <label style={{
-            display: 'block',
-            marginBottom: '5px',
-            fontSize: '14px',
-            fontWeight: '500',
-            color: '#495057'
+          {/* Price Mode Toggle */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '8px'
           }}>
-            Limit Price
-          </label>
+            <label style={{
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#495057'
+            }}>
+              {orderState.priceMode === 'absolute' ? 'Limit Price' : 'Price Offset'}
+            </label>
+            <div style={{
+              display: 'flex',
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <button
+                onClick={() => setOrderState(prev => ({ ...prev, priceMode: 'absolute' }))}
+                disabled={isDisabled}
+                style={{
+                  padding: '4px 12px',
+                  border: 'none',
+                  backgroundColor: orderState.priceMode === 'absolute' ? '#007bff' : '#f8f9fa',
+                  color: orderState.priceMode === 'absolute' ? 'white' : '#6c757d',
+                  fontSize: '12px',
+                  fontWeight: orderState.priceMode === 'absolute' ? 'bold' : 'normal',
+                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Absolute
+              </button>
+              <button
+                onClick={() => setOrderState(prev => ({ ...prev, priceMode: 'offset' }))}
+                disabled={isDisabled}
+                style={{
+                  padding: '4px 12px',
+                  border: 'none',
+                  backgroundColor: orderState.priceMode === 'offset' ? '#007bff' : '#f8f9fa',
+                  color: orderState.priceMode === 'offset' ? 'white' : '#6c757d',
+                  fontSize: '12px',
+                  fontWeight: orderState.priceMode === 'offset' ? 'bold' : 'normal',
+                  cursor: isDisabled ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                Offset
+              </button>
+            </div>
+          </div>
+
+          {/* Price Input */}
           <div style={{
             display: 'flex',
             alignItems: 'stretch',
@@ -911,11 +1031,11 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
           }}>
             <input
               type="text"
-              value={orderState.limitPrice}
-              onChange={handleLimitPriceChange}
+              value={orderState.priceMode === 'absolute' ? orderState.limitPrice : orderState.priceOffset}
+              onChange={orderState.priceMode === 'absolute' ? handleLimitPriceChange : handlePriceOffsetChange}
               onKeyPress={handleKeyPress}
               disabled={isDisabled}
-              placeholder="0.00000000"
+              placeholder="0.00"
               style={{
                 flex: 1,
                 padding: '10px',
@@ -927,93 +1047,95 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
               }}
             />
 
-            {/* Step Controls */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              padding: '4px 8px',
-              border: '1px solid #dee2e6',
-              borderRadius: '6px',
-              backgroundColor: isDisabled ? '#f8f9fa' : 'white'
-            }}>
-              <button
-                onClick={() => handlePriceIncrement(-(parseFloat(orderState.priceStep) || 1))}
-                disabled={isDisabled}
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  border: 'none',
-                  borderRadius: '4px',
-                  backgroundColor: isDisabled ? '#e9ecef' : '#f8f9fa',
-                  cursor: isDisabled ? 'not-allowed' : 'pointer',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#6c757d',
-                  transition: 'background-color 0.2s'
-                }}
-                title={`Decrease by ${orderState.priceStep}`}
-                onMouseEnter={(e) => {
-                  if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#e9ecef';
-                }}
-                onMouseLeave={(e) => {
-                  if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#f8f9fa';
-                }}
-              >
-                -
-              </button>
+            {/* Step Controls - Only for absolute mode */}
+            {orderState.priceMode === 'absolute' && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '4px 8px',
+                border: '1px solid #dee2e6',
+                borderRadius: '6px',
+                backgroundColor: isDisabled ? '#f8f9fa' : 'white'
+              }}>
+                <button
+                  onClick={() => handlePriceIncrement(-(parseFloat(orderState.priceStep) || 1))}
+                  disabled={isDisabled}
+                  style={{
+                    width: '24px',
+                    height: '24px',
+                    border: 'none',
+                    borderRadius: '4px',
+                    backgroundColor: isDisabled ? '#e9ecef' : '#f8f9fa',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#6c757d',
+                    transition: 'background-color 0.2s'
+                  }}
+                  title={`Decrease by ${orderState.priceStep}`}
+                  onMouseEnter={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#e9ecef';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#f8f9fa';
+                  }}
+                >
+                  -
+                </button>
 
-              <input
-                type="text"
-                value={orderState.priceStep}
-                onChange={handlePriceStepChange}
-                disabled={isDisabled}
-                placeholder="1"
-                style={{
-                  width: '40px',
-                  height: '24px',
-                  padding: '2px 4px',
-                  border: '1px solid #dee2e6',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  textAlign: 'center',
-                  backgroundColor: isDisabled ? '#f8f9fa' : 'white'
-                }}
-                title="Step amount"
-              />
+                <input
+                  type="text"
+                  value={orderState.priceStep}
+                  onChange={handlePriceStepChange}
+                  disabled={isDisabled}
+                  placeholder="1"
+                  style={{
+                    width: '40px',
+                    height: '24px',
+                    padding: '2px 4px',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    textAlign: 'center',
+                    backgroundColor: isDisabled ? '#f8f9fa' : 'white'
+                  }}
+                  title="Step amount"
+                />
 
-              <button
-                onClick={() => handlePriceIncrement(parseFloat(orderState.priceStep) || 1)}
-                disabled={isDisabled}
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  border: 'none',
-                  borderRadius: '4px',
-                  backgroundColor: isDisabled ? '#e9ecef' : '#f8f9fa',
-                  cursor: isDisabled ? 'not-allowed' : 'pointer',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#6c757d',
-                  transition: 'background-color 0.2s'
-                }}
-                title={`Increase by ${orderState.priceStep}`}
-                onMouseEnter={(e) => {
-                  if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#e9ecef';
-                }}
-                onMouseLeave={(e) => {
-                  if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#f8f9fa';
-                }}
-              >
-                +
-              </button>
-            </div>
+                <button
+                  onClick={() => handlePriceIncrement(parseFloat(orderState.priceStep) || 1)}
+                  disabled={isDisabled}
+                  style={{
+                    width: '24px',
+                    height: '24px',
+                    border: 'none',
+                    borderRadius: '4px',
+                    backgroundColor: isDisabled ? '#e9ecef' : '#f8f9fa',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#6c757d',
+                    transition: 'background-color 0.2s'
+                  }}
+                  title={`Increase by ${orderState.priceStep}`}
+                  onMouseEnter={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#e9ecef';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDisabled) (e.target as HTMLButtonElement).style.backgroundColor = '#f8f9fa';
+                  }}
+                >
+                  +
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1266,7 +1388,8 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
             {formatCurrency(currentPrice)}
           </span>
         </div>
-        {orderState.type === 'limit' && orderState.limitPrice && !isNaN(parseFloat(orderState.limitPrice)) && (
+        {orderState.type === 'limit' 
+        && (
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -1276,8 +1399,8 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
             color: '#495057',
             fontWeight: '500'
           }}>
-            <span>Limit Price:</span>
-            <span>{formatCurrency(parseFloat(orderState.limitPrice))}</span>
+            <span>Order Price:</span>
+            <span>{formatCurrency(effectivePrice)}</span>
           </div>
         )}
       </div>

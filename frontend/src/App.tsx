@@ -25,6 +25,7 @@ function AppContent() {
   const [timeframe, setTimeframe] = useState('5m');
   const [selectedStartTime, setSelectedStartTime] = useState<Date | null>(null);
   const [initialFunding, setInitialFunding] = useState<number>(10000);
+  const [selectedLimitPrice, setSelectedLimitPrice] = useState<number | null>(null);
   const [simulationState, setSimulationState] = useState<SimulationState>({
     state: 'stopped',
     speed: 60, // Default to 60x (1s → 1m)
@@ -279,6 +280,12 @@ function AppContent() {
     }
   }, [simulationState]);
 
+  // Handle price selection from Chart component
+  const handlePriceSelect = useCallback((price: number) => {
+    console.log('Price selected from chart:', price);
+    setSelectedLimitPrice(price);
+  }, []);
+
   // Debounce timer for speed changes
   const speedChangeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -409,6 +416,7 @@ function AppContent() {
                 simulationState={simulationState}
                 onTimeframeChange={handleTimeframeChange}
                 onCandleChange={handleCandleChange}
+                onSelectPrice={handlePriceSelect}
               />
             </div>
 
@@ -424,6 +432,7 @@ function AppContent() {
                 symbol={symbol}
                 currentPrice={simulationState.lastCandle?.close || 0}
                 simulationState={simulationState.state}
+                externalLimitPrice={selectedLimitPrice}
               />
 
               {/* Portfolio Summary */}

@@ -25,6 +25,7 @@ interface ChartProps {
   simulationState?: SimulationState;
   onTimeframeChange: (timeframe: string) => void;
   onCandleChange?: (lastCandle: CandleData | null) => void;
+  onSelectPrice?: (price: number) => void;
 }
 
 const color_palette = {
@@ -52,7 +53,8 @@ const Chart: React.FC<ChartProps> = ({
   selectedStartTime,
   simulationState,
   onTimeframeChange,
-  onCandleChange
+  onCandleChange,
+  onSelectPrice
 }) => {
   const { trades, pendingOrders } = usePositions();
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -599,6 +601,19 @@ const Chart: React.FC<ChartProps> = ({
 
     chart.subscribeCrosshairMove(param => handleCrosshairMove(param, candlestickSeries));
 
+    // Subscribe to chart click events to capture price selection
+    const handleChartClick = (param: any) => {
+      if (onSelectPrice && param.point) {
+        // Get the price from the crosshair position
+        const price = candlestickSeries.coordinateToPrice(param.point.y);
+        if (price !== null) {
+          onSelectPrice(price);
+        }
+      }
+    };
+
+    chart.subscribeClick(handleChartClick);
+
     // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -631,7 +646,7 @@ const Chart: React.FC<ChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData, handleCrosshairMove]);
+  }, [symbol, timeframe, selectedStartTime, initLoad, loadMoreData, handleCrosshairMove, onSelectPrice]);
 
   // Handle simulation real-time updates with frontend aggregation
   useEffect(() => {
