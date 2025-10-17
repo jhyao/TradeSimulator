@@ -22,7 +22,6 @@ interface OrderState {
   percentage: number;
   quantityStep: string;
   priceStep: string;
-  isPlacing: boolean;
   lastOrderStatus: 'success' | 'error' | null;
   lastOrderMessage: string;
 }
@@ -47,7 +46,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     percentage: 0,
     quantityStep: '1',
     priceStep: '1',
-    isPlacing: false,
     lastOrderStatus: null,
     lastOrderMessage: ''
   });
@@ -72,6 +70,14 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
   }, [tradingMode]);
 
+  // set default side based on trading mode
+  useEffect(() => {
+    setOrderState(prev => ({
+      ...prev,
+      side: tradingMode === 'spot' ? 'buy' : 'open_long'
+    }));
+  }, [tradingMode]);
+
   // Save quick trade buttons to localStorage
   const saveQuickTradeButtons = useCallback((buttons: QuickTradeButton[]) => {
     try {
@@ -93,9 +99,8 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
     }
   }, [tradingMode]);
 
-  const isDisabled = (simulationState !== 'playing' && simulationState !== 'paused') || 
-                    connectionState !== ConnectionState.CONNECTED ||
-                    orderState.isPlacing;
+  const isDisabled = false;
+  const isPlaceOrderDisabled = (simulationState !== 'playing' && simulationState !== 'paused') || connectionState !== ConnectionState.CONNECTED;
 
   // Listen for order notifications from WebSocket
   useEffect(() => {
@@ -104,7 +109,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         ...prev,
         lastOrderStatus: lastOrderNotification.type === 'order_failed' ? 'error' : 'success',
         lastOrderMessage: lastOrderNotification.message,
-        isPlacing: false
       }));
     }
   }, [lastOrderNotification]);
@@ -462,7 +466,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
     setOrderState(prev => ({ 
       ...prev, 
-      isPlacing: true, 
       lastOrderStatus: null, 
       lastOrderMessage: '' 
     }));
@@ -491,8 +494,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         lastOrderStatus: 'error',
         lastOrderMessage: `Failed to place order: ${errorMessage}`
       }));
-    } finally {
-      setOrderState(prev => ({ ...prev, isPlacing: false }));
     }
   }, [symbol, orderState, placeOrder, validateOrder, isFuturesOrder, leverage]);
 
@@ -586,7 +587,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
 
       setOrderState(prev => ({
         ...prev,
-        isPlacing: true,
         lastOrderStatus: null,
         lastOrderMessage: ''
       }));
@@ -609,7 +609,6 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
         ...prev,
         lastOrderStatus: 'error',
         lastOrderMessage: `Failed to place order: ${errorMessage}`,
-        isPlacing: false
       }));
     }
   }, [isDisabled, orderState, floorToDecimals, currentPrice, symbol, placeOrder, leverage, getCashBalance, getSymbolPosition, calculatedFuturesPositions]);
@@ -1473,22 +1472,21 @@ const OrderPanel: React.FC<OrderPanelProps> = ({
       {/* Place Order Button */}
       <button
         onClick={handlePlaceOrder}
-        disabled={isDisabled}
+        disabled={isPlaceOrderDisabled}
         style={{
           width: '100%',
           padding: '12px',
           border: 'none',
           borderRadius: '6px',
-          backgroundColor: isDisabled ? '#6c757d' : getSideButtonColor(orderState.side, true),
+          backgroundColor: isPlaceOrderDisabled ? '#6c757d' : getSideButtonColor(orderState.side, true),
           color: 'white',
           fontSize: '16px',
           fontWeight: 'bold',
-          cursor: isDisabled ? 'not-allowed' : 'pointer',
+          cursor: isPlaceOrderDisabled ? 'not-allowed' : 'pointer',
           transition: 'background-color 0.2s'
         }}
       >
-        {orderState.isPlacing ? 'Placing Order...' :
-         isDisabled ? 'Start Simulation to Trade' :
+        {isPlaceOrderDisabled ? 'Start Simulation to Trade' :
          `${getSideDisplayName(orderState.side)} ${symbol}`}
       </button>
 

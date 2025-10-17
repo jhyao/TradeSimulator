@@ -284,7 +284,6 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     if (!currentSimulationStatus?.simulationID) {
       setOrders([]);
       setPendingOrders([]);
-      setOrdersError('No simulation running. Start a simulation to see orders.');
       return;
     }
 
@@ -322,7 +321,6 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
   const fetchTrades = useCallback(async () => {
     if (!currentSimulationStatus?.simulationID) {
       setTrades([]);
-      setTradesError('No simulation running. Start a simulation to see trades.');
       return;
     }
 
