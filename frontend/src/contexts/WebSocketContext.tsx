@@ -3,7 +3,7 @@ import { useWebSocket, WebSocketMessage, SimulationUpdateData, ConnectionState }
 import { MessageData } from '../components/FloatingMessage';
 
 interface OrderNotification {
-  type: 'order_placed' | 'order_executed' | 'order_failed' | 'order_cancelled';
+  type: 'order_placed' | 'order_executed' | 'order_failed' | 'order_cancelled' | 'position_liquidated';
   order: any;
   trade?: any;
   message: string;
@@ -185,6 +185,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           });
           // Show floating error message for order failed
           addFloatingMessage(failedOrderMsg, 'error');
+          break;
+        case 'position_liquidated':
+          const liquidatedTrade = lastMessage.data.trade;
+          const liquidatedMsg = `LIQUIDATION: ${liquidatedTrade?.side?.toUpperCase() || 'POSITION'} - ${liquidatedTrade?.quantity || '?'} ${liquidatedTrade?.symbol || ''} at $${liquidatedTrade?.price || '?'}`;
+          console.warn('Position liquidated:', { trade: liquidatedTrade });
+          setLastOrderNotification({
+            type: 'position_liquidated',
+            order: null,
+            trade: liquidatedTrade,
+            message: liquidatedMsg,
+            timestamp: Date.now()
+          });
+          // Show floating error message for liquidation
+          addFloatingMessage(liquidatedMsg, 'error');
           break;
         case 'order_control_response':
           handleOrderControlResponse(lastMessage);

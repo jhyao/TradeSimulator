@@ -30,7 +30,7 @@ type OrderExecutionEngine struct {
 // OrderExecutionEngineInterface defines the contract for order execution
 type OrderExecutionEngineInterface interface {
 	PlaceOrder(userID, simulationID uint, symbol string, side models.OrderSide, orderType models.OrderType, quantity float64, limitPrice *float64, leverage *float64, currentPrice float64, simulationTime int64) (*models.Order, *models.Trade, error)
-	ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
+	ProcessPriceUpdate(simulationID uint, symbol string, openPrice, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
 	CancelOrder(orderID uint) (*models.Order, error)
 	LoadPendingOrders(simulationID uint) error
 }
@@ -233,11 +233,13 @@ func (oe *OrderExecutionEngine) placeLimitOrder(order *models.Order, simulationT
 	return order, nil
 }
 
-// ProcessPriceUpdate processes price updates and executes limit orders that meet conditions
-// Uses high/low prices for more accurate limit order execution:
+// ProcessPriceUpdate processes price updates, handles liquidations, and executes limit orders that meet conditions
+// Processing order: liquidations first, then limit orders
+// Uses high/low prices for more accurate execution:
+// - Liquidations: check at low (for longs) and high (for shorts)
 // - Sell limit orders execute when high >= limit price
 // - Buy limit orders execute when low <= limit price
-func (oe *OrderExecutionEngine) ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error) {
+func (oe *OrderExecutionEngine) ProcessPriceUpdate(simulationID uint, symbol string, openPrice, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error) {
 	if symbol == "" {
 		return nil, fmt.Errorf("symbol cannot be empty")
 	}
@@ -246,21 +248,46 @@ func (oe *OrderExecutionEngine) ProcessPriceUpdate(symbol string, highPrice, low
 		return nil, fmt.Errorf("invalid prices: high=%.8f, low=%.8f, close=%.8f", highPrice, lowPrice, closePrice)
 	}
 
+	var allExecutedTrades []*models.Trade
+
+	// STEP 1: Process liquidations first (before limit orders)
+	if oe.futuresEngine != nil {
+		var userID uint = 1 // Default user ID for simulation
+
+		// Check and execute liquidations if needed (cross margin mode)
+		// This method checks liquidation conditions and executes liquidations if triggered
+		liquidationTrades, err := oe.futuresEngine.CheckLiquidations(userID, simulationID, symbol, openPrice, highPrice, lowPrice, closePrice, simulationTime)
+		if err != nil {
+			log.Printf("Error checking/processing liquidations: %v", err)
+		}
+
+		// Send WebSocket notifications for all liquidated positions
+		if len(liquidationTrades) > 0 {
+			log.Printf("Successfully liquidated %d positions", len(liquidationTrades))
+
+			// Send liquidation notifications to client
+			for _, trade := range liquidationTrades {
+				oe.sendLiquidationNotification(trade)
+			}
+
+			allExecutedTrades = append(allExecutedTrades, liquidationTrades...)
+		}
+	}
+
+	// STEP 2: Process limit orders
 	if oe.orderBook == nil {
 		log.Printf("Order book not initialized for price update")
-		return nil, nil
+		return allExecutedTrades, nil
 	}
 
 	// Get orders that should execute using high/low prices from order book
 	ordersToExecute := oe.orderBook.GetOrdersToExecute(symbol, highPrice, lowPrice)
 
 	if len(ordersToExecute) == 0 {
-		return nil, nil // No orders to execute
+		return allExecutedTrades, nil // No orders to execute, return liquidation trades if any
 	}
 
 	log.Printf("Processing %d limit orders for %s (high: %.8f, low: %.8f, close: %.8f)", len(ordersToExecute), symbol, highPrice, lowPrice, closePrice)
-
-	var executedTrades []*models.Trade
 
 	for _, order := range ordersToExecute {
 		// Start transaction for this order execution
@@ -324,10 +351,10 @@ func (oe *OrderExecutionEngine) ProcessPriceUpdate(symbol string, highPrice, low
 		// Send order executed notification to client
 		oe.sendOrderUpdate(types.OrderExecuted, order, trade)
 
-		executedTrades = append(executedTrades, trade)
+		allExecutedTrades = append(allExecutedTrades, trade)
 	}
 
-	return executedTrades, nil
+	return allExecutedTrades, nil
 }
 
 // CancelOrder cancels a pending limit order
@@ -413,4 +440,18 @@ func (oe *OrderExecutionEngine) sendOrderUpdate(eventType types.MessageType, ord
 
 	oe.client.SendMessage(eventType, data)
 	log.Printf("Sent %s for order %d", eventType, order.ID)
+}
+
+// sendLiquidationNotification sends liquidation notification to the client via WebSocket
+func (oe *OrderExecutionEngine) sendLiquidationNotification(trade *models.Trade) {
+	if oe.client == nil {
+		return // No client to send to
+	}
+
+	data := map[string]interface{}{
+		"trade": trade,
+	}
+
+	oe.client.SendMessage(types.PositionLiquidated, data)
+	log.Printf("Sent liquidation notification for trade %d", trade.ID)
 }

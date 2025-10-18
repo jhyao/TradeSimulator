@@ -72,9 +72,9 @@ type SimulationEngine struct {
 
 	// Order execution integration
 	orderExecutionEngine interface {
-		ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
+		ProcessPriceUpdate(simulationID uint, symbol string, openPrice, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
 		LoadPendingOrders(simulationID uint) error
-	} // Order execution engine for processing limit orders
+	} // Order execution engine for processing limit orders and liquidations
 }
 
 type SimulationUpdateData struct {
@@ -102,7 +102,7 @@ type SimulationStatus struct {
 }
 
 func NewSimulationEngine(client ClientMessageSender, binanceService *binance.BinanceService, portfolioService *services.PortfolioService, simDAO simulationDAO.SimulationDAOInterface, positionDAO tradingDAO.PositionDAOInterface, orderEngine interface {
-	ProcessPriceUpdate(symbol string, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
+	ProcessPriceUpdate(simulationID uint, symbol string, openPrice, highPrice, lowPrice, closePrice float64, simulationTime int64) ([]*models.Trade, error)
 	LoadPendingOrders(simulationID uint) error
 }) *SimulationEngine {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -363,12 +363,12 @@ func (se *SimulationEngine) processNextBaseUpdate() bool {
 			se.currentPrice = baseCandle.Close
 			se.currentPriceTime = baseCandle.EndTime
 
-			// Process limit orders using candle high/low/close prices (before sending to client)
+			// Process liquidations and limit orders using candle OHLC prices (before sending to client)
 			if se.orderExecutionEngine != nil {
-				if trades, err := se.orderExecutionEngine.ProcessPriceUpdate(se.symbol, baseCandle.High, baseCandle.Low, baseCandle.Close, se.currentPriceTime); err != nil {
-					log.Printf("Error processing limit orders for candle (high: %.8f, low: %.8f, close: %.8f): %v", baseCandle.High, baseCandle.Low, baseCandle.Close, err)
+				if trades, err := se.orderExecutionEngine.ProcessPriceUpdate(se.currentSimulationID, se.symbol, baseCandle.Open, baseCandle.High, baseCandle.Low, baseCandle.Close, se.currentPriceTime); err != nil {
+					log.Printf("Error processing liquidations and limit orders for candle (open: %.8f, high: %.8f, low: %.8f, close: %.8f): %v", baseCandle.Open, baseCandle.High, baseCandle.Low, baseCandle.Close, err)
 				} else if len(trades) > 0 {
-					log.Printf("Processed %d limit order executions for candle (high: %.8f, low: %.8f, close: %.8f)", len(trades), baseCandle.High, baseCandle.Low, baseCandle.Close)
+					log.Printf("Processed %d liquidations and limit order executions for candle (open: %.8f, high: %.8f, low: %.8f, close: %.8f)", len(trades), baseCandle.Open, baseCandle.High, baseCandle.Low, baseCandle.Close)
 				}
 			}
 

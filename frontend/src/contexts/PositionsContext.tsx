@@ -382,7 +382,7 @@ export const PositionsProvider: React.FC<PositionsProviderProps> = ({
     if (lastOrderNotification) {
       const { type } = lastOrderNotification;
 
-      if (type === 'order_executed') {
+      if (type === 'order_executed' || type === 'position_liquidated') {
         console.log('PositionsContext: Order executed, refreshing all data after delay');
         setTimeout(() => {
           console.log('PositionsContext: Executing refresh for order_executed');
